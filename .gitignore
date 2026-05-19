@@ -1,0 +1,16 @@
+.env
+node_modules
+dist
+build
+coverage
+logs
+*.log
+*.tmp
+.DS_Store
+.idea
+.vscode
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?                       
