@@ -221,7 +221,6 @@ function CreateModal({ onClose, onCreated }) {
   }
 
   const filteredProducts = products.filter((p) =>
-    !p.isCustom &&
     p.name.toLowerCase().includes(search.toLowerCase())
   )
 
@@ -434,7 +433,10 @@ function CreateModal({ onClose, onCreated }) {
                         className="w-4 h-4 rounded accent-blue-600 shrink-0"
                       />
                       <span className="flex-1 text-sm text-gray-800 font-medium">{prod.name}</span>
-                      {prod.category && (
+                      {prod.isCustom && (
+                        <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium shrink-0">Custom</span>
+                      )}
+                      {!prod.isCustom && prod.category && (
                         <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded shrink-0">{prod.category}</span>
                       )}
                       <span className="text-sm font-semibold text-gray-700 shrink-0">
