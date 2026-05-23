@@ -433,10 +433,15 @@ function CreateModal({ onClose, onCreated }) {
                         className="w-4 h-4 rounded accent-blue-600 shrink-0"
                       />
                       <span className="flex-1 text-sm text-gray-800 font-medium">{prod.name}</span>
-                      {prod.isCustom && (
+                      {prod.isBundle && (
+                        <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium shrink-0">
+                          Bundle · {prod.bundleItems?.length || 0}
+                        </span>
+                      )}
+                      {prod.isCustom && !prod.isBundle && (
                         <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium shrink-0">Custom</span>
                       )}
-                      {!prod.isCustom && prod.category && (
+                      {!prod.isCustom && !prod.isBundle && prod.category && (
                         <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded shrink-0">{prod.category}</span>
                       )}
                       <span className="text-sm font-semibold text-gray-700 shrink-0">
@@ -456,10 +461,17 @@ function CreateModal({ onClose, onCreated }) {
                 <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Selected Items</span>
                 <span className="text-xs text-gray-500">{selectedItems.length} item{selectedItems.length > 1 ? 's' : ''}</span>
               </div>
-              {selectedItems.map((item, idx) => (
+              {selectedItems.map((item, idx) => {
+                const srcProd = item.product_id ? products.find(p => p._id === item.product_id) : null
+                return (
                 <div key={idx} className="flex items-center gap-3 px-3 py-2 border-b border-gray-100 last:border-0">
                   <span className="flex-1 text-sm text-gray-800">{item.name}</span>
-                  {item.isCustom && (
+                  {srcProd?.isBundle && (
+                    <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium shrink-0">
+                      Bundle · {srcProd.bundleItems?.length || 0} items
+                    </span>
+                  )}
+                  {item.isCustom && !srcProd?.isBundle && (
                     <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium shrink-0">Custom</span>
                   )}
                   {item.isCustom && (
@@ -494,7 +506,8 @@ function CreateModal({ onClose, onCreated }) {
                     ×
                   </button>
                 </div>
-              ))}
+                )
+              })}
 
               {/* Subtotal + optional discount */}
               <div className="border-t border-gray-200 bg-gray-100">

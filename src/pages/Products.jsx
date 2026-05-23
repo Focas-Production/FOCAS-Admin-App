@@ -11,6 +11,8 @@ const empty = {
   courses: '', features: '',
   stock: '',
   showInComboStore: false,
+  isBundle: false,
+  bundleItems: [],
 }
 
 export default function Products() {
@@ -24,7 +26,14 @@ export default function Products() {
   const [page, setPage]             = useState(1)
   const [limit, setLimit]           = useState(20)
   const [pagination, setPagination] = useState({ total: 0, totalPages: 1 })
-  const [counts, setCounts]         = useState({ catalog: 0, custom: 0 })
+  const [counts, setCounts]         = useState({ catalog: 0, custom: 0, bundle: 0 })
+
+  // Bundle item picker state
+  const [bundleProductsList, setBundleProductsList] = useState([])
+  const [bundleSearch, setBundleSearch]             = useState('')
+  const [showBundleCustomForm, setShowBundleCustomForm] = useState(false)
+  const [bundleCustomName, setBundleCustomName]     = useState('')
+  const [bundleCustomPrice, setBundleCustomPrice]   = useState('')
 
   async function load(p = page, l = limit, f = filter) {
     setLoading(true)
@@ -43,13 +52,29 @@ export default function Products() {
 
   useEffect(() => { load() }, [])
 
+  async function ensureBundleProductsLoaded() {
+    if (bundleProductsList.length > 0) return
+    try {
+      const { data } = await api.get('/admin/products?limit=1000')
+      setBundleProductsList((data.products || []).filter(p => !p.isBundle))
+    } catch {}
+  }
+
   function openCreate() {
     setError('')
+    setBundleSearch('')
+    setShowBundleCustomForm(false)
+    setBundleCustomName('')
+    setBundleCustomPrice('')
     setModal({ mode: 'create', data: { ...empty } })
   }
 
   function openEdit(product) {
     setError('')
+    setBundleSearch('')
+    setShowBundleCustomForm(false)
+    setBundleCustomName('')
+    setBundleCustomPrice('')
     setModal({
       mode: 'edit',
       id: product._id,
@@ -72,12 +97,54 @@ export default function Products() {
         features: (product.grants?.features || []).join(', '),
         stock: product.stock ?? '',
         showInComboStore: product.showInComboStore ?? false,
+        isBundle: product.isBundle ?? false,
+        bundleItems: (product.bundleItems || []).map(bi => ({
+          product_id: bi.product_id?.toString() || null,
+          name:       bi.name || '',
+          price:      bi.price || 0,
+          isCustom:   bi.isCustom || false,
+        })),
       },
     })
+    if (product.isBundle) ensureBundleProductsLoaded()
   }
 
   function setField(key, value) {
     setModal((prev) => ({ ...prev, data: { ...prev.data, [key]: value } }))
+  }
+
+  function addBundleItemFromProduct(prod) {
+    if (modal.data.bundleItems.some(bi => bi.product_id === prod._id)) return
+    setField('bundleItems', [...modal.data.bundleItems, {
+      product_id: prod._id,
+      name:       prod.name,
+      price:      prod.price || 0,
+      isCustom:   prod.isCustom || false,
+    }])
+    setBundleSearch('')
+  }
+
+  function addBundleCustomItem() {
+    if (!bundleCustomName.trim()) return
+    setField('bundleItems', [...modal.data.bundleItems, {
+      product_id: null,
+      name:       bundleCustomName.trim(),
+      price:      Number(bundleCustomPrice) || 0,
+      isCustom:   true,
+    }])
+    setBundleCustomName('')
+    setBundleCustomPrice('')
+    setShowBundleCustomForm(false)
+  }
+
+  function removeBundleItem(idx) {
+    setField('bundleItems', modal.data.bundleItems.filter((_, i) => i !== idx))
+  }
+
+  function setBundleItemPrice(idx, price) {
+    const next = [...modal.data.bundleItems]
+    next[idx] = { ...next[idx], price: Number(price) || 0 }
+    setField('bundleItems', next)
   }
 
   async function handleSave(e) {
@@ -86,6 +153,10 @@ export default function Products() {
     const d = modal.data
     if (d.shipToHome && (!d.weight || Number(d.weight) <= 0)) {
       setError('Weight (grams) is required for ShipToHome products')
+      return
+    }
+    if (d.isBundle && d.bundleItems.length === 0) {
+      setError('A bundle must have at least one item')
       return
     }
     setSaving(true)
@@ -110,6 +181,8 @@ export default function Products() {
       },
       stock: d.stock !== '' ? Number(d.stock) : null,
       showInComboStore: d.showInComboStore,
+      isBundle: d.isBundle,
+      bundleItems: d.isBundle ? d.bundleItems : [],
     }
     try {
       if (modal.mode === 'create') {
@@ -155,6 +228,7 @@ export default function Products() {
 
   const catalogCount = counts.catalog
   const customCount  = counts.custom
+  const bundleCount  = counts.bundle || 0
   const displayed    = products
 
   return (
@@ -165,6 +239,11 @@ export default function Products() {
           {customCount > 0 && (
             <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">
               {customCount} custom
+            </span>
+          )}
+          {bundleCount > 0 && (
+            <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
+              {bundleCount} bundle{bundleCount !== 1 ? 's' : ''}
             </span>
           )}
         </div>
@@ -178,7 +257,7 @@ export default function Products() {
 
       {/* Filter tabs */}
       <div className="flex gap-1 border-b border-gray-200">
-        {[['all', 'All Products'], ['catalog', 'Catalog'], ['custom', 'Custom Products']].map(([val, label]) => (
+        {[['all', 'All Products'], ['catalog', 'Catalog'], ['custom', 'Custom Products'], ['bundle', 'Bundles']].map(([val, label]) => (
           <button
             key={val}
             onClick={() => handleFilterChange(val)}
@@ -194,6 +273,9 @@ export default function Products() {
             )}
             {val === 'catalog' && (
               <span className="ml-1.5 text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full">{catalogCount}</span>
+            )}
+            {val === 'bundle' && bundleCount > 0 && (
+              <span className="ml-1.5 text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">{bundleCount}</span>
             )}
           </button>
         ))}
@@ -230,11 +312,20 @@ export default function Products() {
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <span className="font-medium text-gray-900">{p.name}</span>
-                        {p.isCustom && (
+                        {p.isBundle && (
+                          <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium">
+                            Bundle · {p.bundleItems?.length || 0} items
+                          </span>
+                        )}
+                        {p.isCustom && !p.isBundle && (
                           <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium">Custom</span>
                         )}
                       </div>
-                      <div className="text-gray-400 text-xs truncate max-w-xs">{p.description}</div>
+                      <div className="text-gray-400 text-xs truncate max-w-xs">
+                        {p.isBundle && p.bundleItems?.length > 0
+                          ? p.bundleItems.map(bi => bi.name).join(', ')
+                          : p.description}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-gray-700">
                       <div className="text-xs space-y-0.5">
@@ -422,6 +513,147 @@ export default function Products() {
                     </span>
                   </label>
                 </div>
+
+                {/* Is Bundle toggle */}
+                <div className="col-span-2 flex items-center gap-2 pb-1">
+                  <input type="checkbox" id="isBundle" checked={modal.data.isBundle}
+                    onChange={(e) => {
+                      setField('isBundle', e.target.checked)
+                      if (e.target.checked) ensureBundleProductsLoaded()
+                    }}
+                    className="rounded accent-amber-600" />
+                  <label htmlFor="isBundle" className="text-sm text-gray-700">
+                    Is Bundle
+                    <span className="ml-1.5 text-xs text-amber-600 font-medium bg-amber-50 px-2 py-0.5 rounded-full">
+                      Groups multiple products
+                    </span>
+                  </label>
+                </div>
+
+                {/* Bundle items editor */}
+                {modal.data.isBundle && (
+                  <div className="col-span-2 border border-amber-200 rounded-lg p-4 bg-amber-50/30 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide">
+                        Bundle Items ({modal.data.bundleItems.length})
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setShowBundleCustomForm(v => !v)}
+                        className="text-xs px-2.5 py-1 rounded-lg border border-amber-300 text-amber-600 hover:bg-amber-100 font-medium"
+                      >
+                        {showBundleCustomForm ? 'Cancel' : '+ Custom Item'}
+                      </button>
+                    </div>
+
+                    {/* Inline custom item form */}
+                    {showBundleCustomForm && (
+                      <div className="flex gap-2 items-center">
+                        <input
+                          value={bundleCustomName}
+                          onChange={(e) => setBundleCustomName(e.target.value)}
+                          placeholder="Item name"
+                          className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        />
+                        <input
+                          type="number" min="0"
+                          value={bundleCustomPrice}
+                          onChange={(e) => setBundleCustomPrice(e.target.value)}
+                          placeholder="₹ Price"
+                          className="w-24 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        />
+                        <button
+                          type="button"
+                          onClick={addBundleCustomItem}
+                          className="px-3 py-1.5 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-700"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Search existing products */}
+                    <div>
+                      <input
+                        type="text"
+                        value={bundleSearch}
+                        onChange={(e) => setBundleSearch(e.target.value)}
+                        placeholder="Search existing products to add…"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                      />
+                      {bundleSearch && (
+                        <div className="mt-1 border border-gray-200 rounded-lg overflow-hidden max-h-36 overflow-y-auto bg-white shadow-sm">
+                          {bundleProductsList
+                            .filter(p => p.name.toLowerCase().includes(bundleSearch.toLowerCase()))
+                            .slice(0, 10)
+                            .map(prod => {
+                              const isAdded = modal.data.bundleItems.some(bi => bi.product_id === prod._id)
+                              return (
+                                <button
+                                  key={prod._id}
+                                  type="button"
+                                  disabled={isAdded}
+                                  onClick={() => addBundleItemFromProduct(prod)}
+                                  className={`w-full text-left flex items-center justify-between px-3 py-2 text-sm border-b border-gray-50 last:border-0 transition-colors ${
+                                    isAdded ? 'text-gray-300 cursor-not-allowed bg-gray-50' : 'hover:bg-amber-50'
+                                  }`}
+                                >
+                                  <span className="flex items-center gap-2">
+                                    {prod.name}
+                                    {prod.isCustom && <span className="text-xs bg-purple-100 text-purple-600 px-1 rounded">Custom</span>}
+                                  </span>
+                                  <span className="text-gray-400 text-xs">{prod.price ? `₹${prod.price.toLocaleString()}` : '—'}</span>
+                                </button>
+                              )
+                            })}
+                          {bundleProductsList.filter(p => p.name.toLowerCase().includes(bundleSearch.toLowerCase())).length === 0 && (
+                            <p className="px-3 py-2 text-sm text-gray-400">No products found</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Selected bundle items */}
+                    {modal.data.bundleItems.length > 0 ? (
+                      <div className="space-y-1.5">
+                        {modal.data.bundleItems.map((bi, idx) => (
+                          <div key={idx} className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2">
+                            <span className="flex-1 text-sm text-gray-800 truncate">{bi.name}</span>
+                            {!bi.product_id && (
+                              <span className="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded shrink-0">Custom</span>
+                            )}
+                            <div className="flex items-center gap-1 shrink-0">
+                              <span className="text-xs text-gray-400">₹</span>
+                              <input
+                                type="number" min="0"
+                                value={bi.price}
+                                onChange={(e) => setBundleItemPrice(idx, e.target.value)}
+                                className="w-24 border border-gray-200 rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-amber-400"
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => removeBundleItem(idx)}
+                              className="text-red-400 hover:text-red-600 text-base leading-none shrink-0"
+                              title="Remove"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                        <div className="flex justify-between text-xs text-amber-700 px-1 pt-1">
+                          <span>{modal.data.bundleItems.length} item{modal.data.bundleItems.length !== 1 ? 's' : ''}</span>
+                          <span className="font-medium">
+                            Sum: ₹{modal.data.bundleItems.reduce((s, bi) => s + (bi.price || 0), 0).toLocaleString()}
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-amber-600 text-center py-2 italic">Search and add products above</p>
+                    )}
+                  </div>
+                )}
+
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Stock Quantity</label>
                   <input type="number" min="0" value={modal.data.stock} onChange={(e) => setField('stock', e.target.value)}
