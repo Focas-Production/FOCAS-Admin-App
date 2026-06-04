@@ -811,7 +811,12 @@ function PaymentRow({ payment }) {
           <p className="text-xs text-gray-500">{payment.phone || '—'}</p>
         </td>
         <td className="px-4 py-3">
-          <p className="text-sm text-gray-700">{payment.product_name}</p>
+          <div className="flex items-center gap-2">
+            <p className="text-sm text-gray-700">{payment.product_name}</p>
+            {payment.payment_method === 'manual'
+              ? <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 whitespace-nowrap">Manual</span>
+              : <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 whitespace-nowrap">Link</span>}
+          </div>
           {payment.note && <p className="text-xs text-gray-400 truncate max-w-[160px]">{payment.note}</p>}
         </td>
         <td className="px-4 py-3 text-sm font-semibold text-gray-800">₹{payment.full_amount?.toLocaleString()}</td>
@@ -918,7 +923,7 @@ export default function Payments() {
   const [pagination,  setPagination]  = useState({ page: 1, totalPages: 1, total: 0 })
   const [limit,       setLimit]       = useState(20)
 
-  const [filters, setFilters] = useState({ phone: '', status: '', dateFrom: '', dateTo: '' })
+  const [filters, setFilters] = useState({ phone: '', status: '', dateFrom: '', dateTo: '', method: '' })
   const debounceRef = useRef(null)
 
   const load = useCallback(async (page = 1, f = filters, lim = limit) => {
@@ -929,6 +934,7 @@ export default function Payments() {
       if (f.status)   params.set('status',   f.status)
       if (f.dateFrom) params.set('dateFrom', f.dateFrom)
       if (f.dateTo)   params.set('dateTo',   f.dateTo)
+      if (f.method)   params.set('method',   f.method)
 
       const { data } = await api.get(`/payment?${params}`)
       setPayments(data.payments || [])
@@ -955,12 +961,12 @@ export default function Payments() {
   }
 
   function handleClear() {
-    const f = { phone: '', status: '', dateFrom: '', dateTo: '' }
+    const f = { phone: '', status: '', dateFrom: '', dateTo: '', method: '' }
     setFilters(f)
     load(1, f)
   }
 
-  const hasFilter = filters.phone || filters.status || filters.dateFrom || filters.dateTo
+  const hasFilter = filters.phone || filters.status || filters.dateFrom || filters.dateTo || filters.method
 
   async function handleExport() {
     setExporting(true)
@@ -970,6 +976,7 @@ export default function Payments() {
       if (filters.status)   params.set('status',   filters.status)
       if (filters.dateFrom) params.set('dateFrom', filters.dateFrom)
       if (filters.dateTo)   params.set('dateTo',   filters.dateTo)
+      if (filters.method)   params.set('method',   filters.method)
 
       const { data } = await api.get(`/payment?${params}`)
       const rows = data.payments || []
@@ -1098,6 +1105,16 @@ export default function Payments() {
           <option value="paid">Paid</option>
           <option value="cancelled">Cancelled</option>
           <option value="expired">Expired</option>
+        </select>
+        <select
+          value={filters.method}
+          onChange={(e) => handleFilterChange('method', e.target.value)}
+          title="Payment method"
+          className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="">All Methods</option>
+          <option value="razorpay">Razorpay Links</option>
+          <option value="manual">Manual (GPay etc.)</option>
         </select>
         <input
           type="date"

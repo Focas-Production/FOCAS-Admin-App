@@ -172,6 +172,25 @@ function OrderDrawer({ orderId, onClose }) {
               </div>
             </section>
 
+            {/* Payment Proof (GPay / offline) */}
+            {order.paymentProofUrl && (
+              <section>
+                <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Payment Proof</h3>
+                <a href={order.paymentProofUrl} target="_blank" rel="noopener noreferrer" className="block">
+                  <img
+                    src={order.paymentProofUrl}
+                    alt="Payment proof"
+                    className="w-full max-h-72 object-contain rounded-lg border border-gray-200 bg-gray-50"
+                    onError={(e) => { e.currentTarget.style.display = 'none' }}
+                  />
+                </a>
+                <a href={order.paymentProofUrl} target="_blank" rel="noopener noreferrer"
+                  className="inline-block mt-2 text-xs text-blue-600 hover:underline break-all">
+                  Open proof ↗
+                </a>
+              </section>
+            )}
+
             {/* Shipment */}
             {order.shipment?.awb && (
               <section>
@@ -409,6 +428,207 @@ function NotesCell({ orderId, initial }) {
   )
 }
 
+// ─── Record GPay Payment Modal ───────────────────────────────────────────────
+// Records an offline GPay payment for an existing product. The backend runs the
+// same flow as a fully-paid custom order (purchase, grants, inventory, WATI msg).
+
+function GpayPaymentModal({ onClose, onSuccess }) {
+  const [products, setProducts] = useState([])
+  const [search,   setSearch]   = useState('')
+  const [showList, setShowList] = useState(false)
+  const [form, setForm] = useState({
+    name: '', phone: '', productId: '', amount: '', screenshotUrl: '', notes: '',
+    hasDelivery: false, line1: '', line2: '', city: '', state: '', pincode: '',
+  })
+  const [saving, setSaving] = useState(false)
+  const [error,  setError]  = useState('')
+
+  useEffect(() => {
+    api.get('/admin/products?limit=1000')
+      .then(({ data }) => setProducts(data.products || []))
+      .catch(() => setProducts([]))
+  }, [])
+
+  function set(key, value) { setForm((f) => ({ ...f, [key]: value })) }
+
+  function handleProductChange(id) {
+    const prod = products.find((p) => p._id === id)
+    setForm((f) => ({
+      ...f,
+      productId: id,
+      // Prefill amount from the product price if the field is still empty
+      amount: f.amount || (prod?.price != null ? String(prod.price) : ''),
+    }))
+  }
+
+  async function submit() {
+    setError('')
+    if (!form.name.trim())  return setError('Customer name is required')
+    if (!form.phone.trim()) return setError('Phone number is required')
+    if (!form.productId)    return setError('Please select a product')
+    if (!form.amount || Number(form.amount) < 1) return setError('Enter a valid amount')
+    if (!form.screenshotUrl.trim()) return setError('Payment proof (screenshot URL) is required')
+    if (form.hasDelivery) {
+      if (!form.line1.trim())   return setError('Address Line 1 is required for delivery')
+      if (!form.city.trim())    return setError('City is required for delivery')
+      if (!form.state.trim())   return setError('State is required for delivery')
+      if (!form.pincode.trim()) return setError('Pincode is required for delivery')
+    }
+    setSaving(true)
+    try {
+      await api.post('/payment/manual', {
+        name:          form.name.trim(),
+        phone:         form.phone.trim(),
+        productId:     form.productId,
+        amount:        Number(form.amount),
+        screenshotUrl: form.screenshotUrl.trim() || undefined,
+        notes:         form.notes.trim() || undefined,
+        hasDelivery:   form.hasDelivery,
+        address:       form.hasDelivery ? {
+          line1:   form.line1.trim(),
+          line2:   form.line2.trim() || undefined,
+          city:    form.city.trim(),
+          state:   form.state.trim(),
+          pincode: form.pincode.trim(),
+        } : undefined,
+      })
+      onSuccess()
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to record payment')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const selectedProduct = products.find((p) => p._id === form.productId)
+  const filtered = search
+    ? products.filter((p) => p.name?.toLowerCase().includes(search.toLowerCase()))
+    : products
+  const inputCls = 'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="font-semibold text-gray-900">Record Manual Payment</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+        </div>
+        <p className="text-xs text-gray-400 mb-4">For customers who paid directly (GPay, PhonePe, UPI, bank transfer). Recorded as a custom order.</p>
+
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Customer Name <span className="text-red-500">*</span></label>
+            <input value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="e.g. Rajesh" className={inputCls} />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Phone Number <span className="text-red-500">*</span></label>
+            <input value={form.phone} onChange={(e) => set('phone', e.target.value)} placeholder="10-digit GPay number" className={inputCls} />
+          </div>
+
+          <div className="relative">
+            <label className="block text-xs font-medium text-gray-600 mb-1">Product <span className="text-red-500">*</span> <span className="text-gray-400 font-normal">(existing only)</span></label>
+            <input
+              value={selectedProduct ? selectedProduct.name : search}
+              onChange={(e) => { setSearch(e.target.value); set('productId', ''); setShowList(true) }}
+              onFocus={() => setShowList(true)}
+              onBlur={() => setTimeout(() => setShowList(false), 150)}
+              placeholder="Search and select a product…"
+              className={inputCls}
+            />
+            {showList && (
+              <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg">
+                {filtered.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-gray-400">No products found</p>
+                ) : filtered.map((p) => (
+                  <button
+                    type="button"
+                    key={p._id}
+                    onMouseDown={(e) => { e.preventDefault(); handleProductChange(p._id); setSearch(''); setShowList(false) }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 border-b border-gray-50 last:border-0"
+                  >
+                    {p.name}{p.price != null ? ` — ₹${p.price}` : ''}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Amount (₹) <span className="text-red-500">*</span></label>
+            <input type="number" min="1" value={form.amount} onChange={(e) => set('amount', e.target.value)} placeholder="Amount paid via GPay" className={inputCls} />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Payment Proof (Screenshot URL) <span className="text-red-500">*</span></label>
+            <input type="url" value={form.screenshotUrl} onChange={(e) => set('screenshotUrl', e.target.value)} placeholder="https://… (link to payment screenshot)" className={inputCls} />
+            {form.screenshotUrl.trim() && (
+              <a href={form.screenshotUrl.trim()} target="_blank" rel="noopener noreferrer" className="inline-block mt-1.5 text-xs text-blue-600 hover:underline">
+                Preview proof ↗
+              </a>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Admin Notes <span className="text-gray-400 font-normal">(optional)</span></label>
+            <textarea rows={2} value={form.notes} onChange={(e) => set('notes', e.target.value)} placeholder="Any internal note about this payment…" className={`${inputCls} resize-none`} />
+          </div>
+
+          {/* Has Delivery — admin-controlled; reveals address fields when ticked */}
+          <label className="flex items-center gap-2 cursor-pointer select-none pt-1">
+            <input
+              type="checkbox"
+              checked={form.hasDelivery}
+              onChange={(e) => set('hasDelivery', e.target.checked)}
+              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <span className="text-sm font-medium text-gray-700">Has Delivery</span>
+            <span className="text-xs text-gray-400">(ship a physical item)</span>
+          </label>
+
+          {form.hasDelivery && (
+            <div className="space-y-3 rounded-lg border border-gray-200 bg-gray-50/60 p-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Address Line 1 <span className="text-red-500">*</span></label>
+                <input value={form.line1} onChange={(e) => set('line1', e.target.value)} placeholder="House no, street" className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Address Line 2</label>
+                <input value={form.line2} onChange={(e) => set('line2', e.target.value)} placeholder="Area, landmark (optional)" className={inputCls} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">City <span className="text-red-500">*</span></label>
+                  <input value={form.city} onChange={(e) => set('city', e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">State <span className="text-red-500">*</span></label>
+                  <input value={form.state} onChange={(e) => set('state', e.target.value)} className={inputCls} />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Pincode <span className="text-red-500">*</span></label>
+                <input value={form.pincode} onChange={(e) => set('pincode', e.target.value)} placeholder="6-digit pincode" className={inputCls} />
+              </div>
+            </div>
+          )}
+
+          {error && <p className="text-xs text-red-600">{error}</p>}
+
+          <div className="flex gap-2 pt-1">
+            <button type="button" onClick={onClose} className="flex-1 py-2 rounded-lg border border-gray-300 text-gray-600 text-sm hover:bg-gray-50">
+              Cancel
+            </button>
+            <button type="button" onClick={submit} disabled={saving} className="flex-1 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+              {saving ? 'Recording…' : 'Record Payment'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function AllOrders() {
@@ -422,6 +642,7 @@ export default function AllOrders() {
   const [actionLoading, setActionLoading] = useState({})
   const [rateModal, setRateModal] = useState(null)
   const [exporting, setExporting] = useState(false)
+  const [showGpay, setShowGpay] = useState(false)
   const debounceRef = useRef(null)
 
   const load = useCallback(async (page = 1, f = filters, src = sourceTab, lim = limit) => {
@@ -620,7 +841,17 @@ export default function AllOrders() {
     <div className="space-y-4">
       {/* Title + filter row */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <p className="text-sm text-gray-500">{pagination.total} total orders</p>
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-gray-500">{pagination.total} total orders</p>
+          {sourceTab === 'custom' && (
+            <button
+              onClick={() => setShowGpay(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition-colors"
+            >
+              + Record Manual Payment
+            </button>
+          )}
+        </div>
 
         <div className="flex flex-wrap items-center gap-2">
           {/* Global search — resets to page 1, queries all records */}
@@ -906,6 +1137,14 @@ export default function AllOrders() {
 
       {/* Order detail drawer */}
       {selectedId && <OrderDrawer orderId={selectedId} onClose={() => setSelectedId(null)} />}
+
+      {/* Record GPay payment modal */}
+      {showGpay && (
+        <GpayPaymentModal
+          onClose={() => setShowGpay(false)}
+          onSuccess={() => { setShowGpay(false); load(1, filters, sourceTab, limit) }}
+        />
+      )}
     </div>
   )
 }
