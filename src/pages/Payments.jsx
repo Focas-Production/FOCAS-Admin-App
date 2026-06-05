@@ -138,7 +138,9 @@ function CreateModal({ onClose, onCreated }) {
   const [name,           setName]           = useState('')
   const [phone,          setPhone]          = useState('')
   const [note,           setNote]           = useState('')
-  const [emiCount,       setEmiCount]       = useState(null) // null | 2 | 3
+  const [emiCount,       setEmiCount]       = useState(null) // null | 2 | 3 (equal split)
+  const [customMode,     setCustomMode]     = useState(false) // custom-amount EMI
+  const [customAmounts,  setCustomAmounts]  = useState([])    // string[] — per-instalment amounts
   const [shipToHome,     setShipToHome]     = useState(false)
   const [syncAfter,      setSyncAfter]      = useState(1)
   const [grantCourses,   setGrantCourses]   = useState('')
@@ -166,13 +168,35 @@ function CreateModal({ onClose, onCreated }) {
   const subtotal    = selectedItems.reduce((s, i) => s + i.price, 0)
   const discAmt     = Math.max(0, Math.round(Number(discountAmt) || 0))
   const totalAmount = subtotal - Math.min(discAmt, subtotal)
-  const maxSync       = emiCount || 1
+  const effCount      = customMode ? customAmounts.length : emiCount
+  const maxSync       = effCount || 1
+  const customTotal   = customAmounts.reduce((s, n) => s + (Math.round(Number(n)) || 0), 0)
 
-  // When emi_count changes, clamp syncAfter
+  // Full / 2 EMI / 3 EMI (equal split) — clears custom mode
   function changeEmi(val) {
+    setCustomMode(false)
+    setCustomAmounts([])
     setEmiCount(val)
     const max = val || 1
     if (syncAfter > max) setSyncAfter(max)
+  }
+
+  // Switch to custom-amount EMI mode (admin types each instalment)
+  function selectCustom() {
+    setCustomMode(true)
+    setEmiCount(null)
+    setCustomAmounts([])
+    setSyncAfter(1)
+  }
+
+  // Choose how many custom instalments (2 or 3), preserving any typed values
+  function setCustomCount(n) {
+    setCustomAmounts((prev) => Array.from({ length: n }, (_, i) => prev[i] ?? ''))
+    if (syncAfter > n) setSyncAfter(n)
+  }
+
+  function setCustomAmount(i, val) {
+    setCustomAmounts((prev) => prev.map((a, idx) => (idx === i ? val : a)))
   }
 
   // Toggle existing product selection
@@ -230,6 +254,16 @@ function CreateModal({ onClose, onCreated }) {
     if (selectedItems.length === 0) { setError('Select or add at least one product'); return }
     if (selectedItems.some((i) => i.price < 1)) { setError('All items must have a price > 0'); return }
 
+    if (customMode) {
+      if (![2, 3].includes(customAmounts.length)) { setError('Choose 2 or 3 instalments for Custom EMI'); return }
+      if (customAmounts.some((a) => !a || Number(a) < 1)) { setError('Enter a valid amount (≥ 1) for each instalment'); return }
+      const sum = customAmounts.reduce((s, a) => s + (Math.round(Number(a)) || 0), 0)
+      if (sum !== totalAmount) {
+        setError(`Instalments must total ₹${totalAmount.toLocaleString()} (currently ₹${sum.toLocaleString()})`)
+        return
+      }
+    }
+
     if (shipToHome) {
       const hasAnyWeight = selectedItems.some((item) => {
         if (item.isCustom) return (item.weight || 0) > 0
@@ -255,7 +289,8 @@ function CreateModal({ onClose, onCreated }) {
           weight:     i.weight || undefined,
         })),
         note:             note.trim() || undefined,
-        emi_count:        emiCount   || undefined,
+        emi_count:          customMode ? undefined : (emiCount || undefined),
+        custom_emi_amounts: customMode ? customAmounts.map((a) => Math.round(Number(a))) : undefined,
         discount_amount:  discAmt > 0 ? discAmt : undefined,
         shipToHome,
         address: shipToHome ? {
@@ -587,7 +622,7 @@ function CreateModal({ onClose, onCreated }) {
                   type="button"
                   onClick={() => changeEmi(val)}
                   className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-colors ${
-                    emiCount === val
+                    !customMode && emiCount === val
                       ? 'bg-blue-600 border-blue-600 text-white'
                       : 'border-gray-200 text-gray-600 hover:border-blue-300'
                   }`}
@@ -595,7 +630,69 @@ function CreateModal({ onClose, onCreated }) {
                   {label}
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={selectCustom}
+                className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                  customMode
+                    ? 'bg-blue-600 border-blue-600 text-white'
+                    : 'border-gray-200 text-gray-600 hover:border-blue-300'
+                }`}
+              >
+                Custom
+              </button>
             </div>
+
+            {/* Custom EMI: pick count, then enter each instalment amount */}
+            {customMode && (
+              <div className="mt-3 space-y-3 rounded-lg border border-gray-200 bg-gray-50/60 p-3">
+                <div className="flex gap-2">
+                  {[2, 3].map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setCustomCount(n)}
+                      className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                        customAmounts.length === n
+                          ? 'bg-indigo-600 border-indigo-600 text-white'
+                          : 'border-gray-200 text-gray-600 hover:border-indigo-300'
+                      }`}
+                    >
+                      {n} EMI
+                    </button>
+                  ))}
+                </div>
+
+                {customAmounts.length > 0 && (
+                  <div className="space-y-2">
+                    {customAmounts.map((amt, i) => (
+                      <div key={i}>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">EMI {i + 1} amount (₹)</label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={amt}
+                          onChange={(e) => setCustomAmount(i, e.target.value)}
+                          placeholder={`Amount for instalment ${i + 1}`}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+                    ))}
+                    <div className="flex justify-between text-sm pt-1 border-t border-gray-200">
+                      <span className="text-gray-500">Instalments total / required</span>
+                      <span className={`font-semibold ${customTotal === totalAmount ? 'text-green-700' : 'text-red-600'}`}>
+                        ₹{customTotal.toLocaleString()} / ₹{totalAmount.toLocaleString()}
+                      </span>
+                    </div>
+                    {customTotal !== totalAmount && (
+                      <p className="text-xs text-red-500">
+                        Instalments must add up to ₹{totalAmount.toLocaleString()} (order total{discAmt > 0 ? ' after discount' : ''}).
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* EMI split preview */}
@@ -717,9 +814,9 @@ function CreateModal({ onClose, onCreated }) {
                         : 'border-gray-200 text-gray-600 hover:border-indigo-300'
                     }`}
                   >
-                    {n === 1 && !emiCount
+                    {n === 1 && !effCount
                       ? 'After Full Payment'
-                      : n === maxSync && emiCount
+                      : n === maxSync && effCount
                       ? `After ${n}${n === 1 ? 'st' : n === 2 ? 'nd' : 'rd'} (Final)`
                       : `After ${n}${n === 1 ? 'st' : n === 2 ? 'nd' : 'rd'} Payment`}
                   </button>
