@@ -643,6 +643,8 @@ export default function AllOrders() {
   const [rateModal, setRateModal] = useState(null)
   const [exporting, setExporting] = useState(false)
   const [showGpay, setShowGpay] = useState(false)
+  const [selectedIds, setSelectedIds] = useState([])   // bulk-select on Delivery tab
+  const [bulkLoading, setBulkLoading] = useState(false)
   const debounceRef = useRef(null)
 
   const load = useCallback(async (page = 1, f = filters, src = sourceTab, lim = limit) => {
@@ -660,6 +662,7 @@ export default function AllOrders() {
       if (f.awbStatus)           params.set('awbStatus', f.awbStatus)
       const { data } = await api.get(`/admin/purchases?${params}`)
       setOrders(data.purchases || [])
+      setSelectedIds([])   // selection is per page/tab — reset on any reload
       setPagination({
         page: data.pagination.page,
         totalPages: data.pagination.totalPages,
@@ -837,6 +840,92 @@ export default function AllOrders() {
 
   const COLS = ['Order ID', 'Customer', 'Source', 'Items', 'Amount', 'Payment', 'Fulfillment', 'Delivery Status', 'AWB', 'Notes', 'Date', 'Actions']
 
+  // ── Bulk selection (Delivery tab only) ──────────────────────────────────────
+  const showSelect = sourceTab === 'shipto'
+  const colCount   = COLS.length + (showSelect ? 1 : 0)
+  // Only un-synced orders (no AWB) are eligible for sync — "select all" targets these,
+  // so already-synced/Manifested orders are never bulk-selected by accident.
+  const syncableIds         = orders.filter((o) => !o.shipment?.awb).map((o) => o._id)
+  const allSyncableSelected = syncableIds.length > 0 && syncableIds.every((id) => selectedIds.includes(id))
+
+  function toggleSelect(id) {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }
+  function toggleSelectAll() {
+    setSelectedIds(allSyncableSelected ? [] : syncableIds)
+  }
+
+  // Validate an order for shipping: must have weight + a complete delivery address
+  function getOrderIssues(o) {
+    const issues = []
+    if (!(o.items || []).some((i) => (i.productId?.weight || 0) > 0)) issues.push('no weight')
+    const a = o.address || {}
+    const pincode = a.pincode || a.zip || a.postalCode || a.postal_code
+    if (!a.line1?.trim()) issues.push('no address')
+    if (!a.city?.trim())  issues.push('no city')
+    if (!a.state?.trim()) issues.push('no state')
+    if (!pincode)         issues.push('no pincode')
+    return issues
+  }
+
+  async function handleBulkSync() {
+    const selected = orders.filter((o) => selectedIds.includes(o._id))
+    const toSync   = selected.filter((o) => !o.shipment?.awb)
+    if (toSync.length === 0) { alert('No un-synced orders selected (already-synced orders are skipped).'); return }
+
+    // Validation: if ANY selected order is missing a required field, abort the whole sync.
+    const invalid = toSync.map((o) => ({ o, issues: getOrderIssues(o) })).filter((x) => x.issues.length)
+    if (invalid.length) {
+      const msg = invalid.map((x) => `• ${x.o.orderId || x.o._id} (${x.o.customerName || x.o.userId?.name || '—'}): ${x.issues.join(', ')}`).join('\n')
+      alert(`Cannot sync — fix these orders first:\n\n${msg}`)
+      return
+    }
+
+    setBulkLoading(true)
+    try {
+      const { data } = await api.post('/delivery/bulk-sync', { purchaseIds: toSync.map((o) => o._id) })
+      const failed = (data.results || []).filter((r) => !r.success)
+      let summary = `Synced ${data.synced} of ${data.total} order(s).`
+      if (failed.length) summary += `\n\nFailed:\n` + failed.map((r) => `• ${r.purchaseId}: ${r.error}`).join('\n')
+      alert(summary)
+      await load(pagination.page, filters, sourceTab, limit)
+    } catch (err) {
+      alert(err.response?.data?.error || 'Bulk sync failed')
+    } finally {
+      setBulkLoading(false)
+    }
+  }
+
+  async function handleBulkLabel() {
+    const selected = orders.filter((o) => selectedIds.includes(o._id))
+    const awbs = selected.map((o) => o.shipment?.awb).filter(Boolean)
+    if (awbs.length === 0) { alert('Selected orders have no AWB. Sync them first.'); return }
+
+    setBulkLoading(true)
+    try {
+      const token = localStorage.getItem('admin_token')
+      const res = await fetch(`/api/delivery/labels/${awbs.join(',')}`, { headers: { Authorization: `Bearer ${token}` } })
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}))
+        alert(e.error || 'Failed to download labels')
+        return
+      }
+      const failedAwbs = res.headers.get('X-Failed-Awbs')
+      if (failedAwbs) alert(`Some labels could not be fetched: ${failedAwbs}`)
+      const blob = await res.blob()
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a')
+      a.href = url
+      a.download = `labels-${awbs.length}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      alert('Failed to download labels')
+    } finally {
+      setBulkLoading(false)
+    }
+  }
+
   return (
     <div className="space-y-4">
       {/* Title + filter row */}
@@ -948,12 +1037,48 @@ export default function AllOrders() {
         ))}
       </div>
 
+      {/* Bulk action bar — Delivery tab only */}
+      {showSelect && selectedIds.length > 0 && (
+        <div className="flex items-center gap-3 bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5">
+          <span className="text-sm font-medium text-blue-800">{selectedIds.length} selected</span>
+          <button
+            onClick={handleBulkSync}
+            disabled={bulkLoading}
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg disabled:opacity-50 transition-colors"
+          >
+            {bulkLoading ? 'Working…' : 'Bulk Sync'}
+          </button>
+          <button
+            onClick={handleBulkLabel}
+            disabled={bulkLoading}
+            className="px-3 py-1.5 bg-gray-700 hover:bg-gray-800 text-white text-xs font-medium rounded-lg disabled:opacity-50 transition-colors"
+          >
+            {bulkLoading ? 'Working…' : 'Bulk Label'}
+          </button>
+          <button onClick={() => setSelectedIds([])} className="ml-auto text-xs text-gray-500 hover:text-gray-700 underline">
+            Clear
+          </button>
+        </div>
+      )}
+
       {/* Table */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
+                {showSelect && (
+                  <th className="px-4 py-3 w-10">
+                    <input
+                      type="checkbox"
+                      checked={allSyncableSelected}
+                      disabled={syncableIds.length === 0}
+                      onChange={toggleSelectAll}
+                      title="Select all un-synced orders"
+                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
+                    />
+                  </th>
+                )}
                 {COLS.map((h) => (
                   <th key={h} className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3 whitespace-nowrap">
                     {h}
@@ -965,7 +1090,7 @@ export default function AllOrders() {
               {loading ? (
                 [...Array(10)].map((_, i) => (
                   <tr key={i}>
-                    {[...Array(COLS.length)].map((_, j) => (
+                    {[...Array(colCount)].map((_, j) => (
                       <td key={j} className="px-4 py-3">
                         <div className="h-4 bg-gray-100 rounded animate-pulse" />
                       </td>
@@ -974,7 +1099,7 @@ export default function AllOrders() {
                 ))
               ) : orders.length === 0 ? (
                 <tr>
-                  <td colSpan={COLS.length} className="px-4 py-8 text-center text-gray-400">No orders found</td>
+                  <td colSpan={colCount} className="px-4 py-8 text-center text-gray-400">No orders found</td>
                 </tr>
               ) : (
                 orders.map((o) => (
@@ -983,6 +1108,16 @@ export default function AllOrders() {
                     onClick={() => setSelectedId(o._id)}
                     className="hover:bg-blue-50 cursor-pointer transition-colors"
                   >
+                    {showSelect && (
+                      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(o._id)}
+                          onChange={() => toggleSelect(o._id)}
+                          className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                        />
+                      </td>
+                    )}
                     <td className="px-4 py-3 font-mono text-xs text-gray-700 max-w-[140px] truncate">{o.orderId || '—'}</td>
                     <td className="px-4 py-3">
                       <div className="font-medium text-gray-900 text-xs">{o.customerName || o.userId?.name || '—'}</div>
