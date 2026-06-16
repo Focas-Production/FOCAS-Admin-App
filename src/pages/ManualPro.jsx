@@ -1,8 +1,21 @@
 import { useState, useEffect } from 'react';
 import { PDFDocument } from 'pdf-lib';
-import { api } from '../lib/api.js';
+import api from '../services/api';
 
 const GREEN = '#1D9E75';
+
+/* Triggers a browser download for in-memory blob/bytes. */
+const saveBlob = (data, filename, type = 'application/pdf') => {
+  const blob = data instanceof Blob ? data : new Blob([data], { type });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
 
 /* ── badge color map ───────────────────────────────────────────── */
 const BADGE_MAP = {
@@ -65,7 +78,7 @@ export default function ManualPro() {
     if (f.startDate)      q.set('startDate', f.startDate);
     if (f.endDate)        q.set('endDate', f.endDate);
     try {
-      const d = await api.get(`/api/manual-class/orders?${q}`).then(r => r.json());
+      const d = await api.get(`/manual-class/orders?${q}`).then(r => r.data);
       if (d.success) { setRows(d.orders); setTotal(d.total); setPages(d.pages || 1); setPage(p); }
       else setError('Failed to load data.');
     } catch (_) { setError('Cannot reach backend — check VITE_API_BASE_URL in .env'); }
@@ -99,7 +112,7 @@ export default function ManualPro() {
     setBusy(id, 'rate');
     setRateModal({ name: order.name, loading: true });
     try {
-      const d = await api.get(`/api/manual-class/get-rate/${id}`).then(r => r.json());
+      const d = await api.get(`/manual-class/get-rate/${id}`).then(r => r.data);
       if (d.success) {
         const r0 = Array.isArray(d.rates) ? d.rates[0] : d.rates;
         const cost = r0?.total_amount ?? r0?.charge_DL ?? null;
@@ -116,19 +129,24 @@ export default function ManualPro() {
   const syncOne = async (id) => {
     setBusy(id, 'sync');
     try {
-      const res = await api.post(`/api/manual-class/sync-shipment/${id}`, {});
-      const d = await res.json();
+      const d = await api.post(`/manual-class/sync-shipment/${id}`).then(r => r.data);
       const awb = d.awb;
-      if (res.ok && d.success && awb) {
+      if (d.success && awb) {
         setRows(prev => prev.map(r => r._id === id ? { ...r, shipment: { ...(r.shipment || {}), awb, trackingStatus: 'Manifested' } } : r));
-      } else if (res.status === 409 && awb) {
-        // already synced — reflect the awb so labels work
-        setRows(prev => prev.map(r => r._id === id ? { ...r, shipment: { ...(r.shipment || {}), awb } } : r));
-        alert('Already synced — AWB ' + awb);
       } else {
         alert(d.error || d.message || 'Sync failed');
       }
-    } catch (_) { alert('Network error during sync'); }
+    } catch (err) {
+      // axios throws on non-2xx — handle "already synced" (409) gracefully.
+      const status = err.response?.status;
+      const d = err.response?.data || {};
+      if (status === 409 && d.awb) {
+        setRows(prev => prev.map(r => r._id === id ? { ...r, shipment: { ...(r.shipment || {}), awb: d.awb } } : r));
+        alert('Already synced — AWB ' + d.awb);
+      } else {
+        alert(d.error || d.message || 'Network error during sync');
+      }
+    }
     finally { setBusy(id, null); }
   };
 
@@ -136,7 +154,8 @@ export default function ManualPro() {
   const labelOne = async (id, awb) => {
     setBusy(id, 'label');
     try {
-      await api.downloadPdf(`/api/manual-class/get-label/${awb}`, `label-${awb}.pdf`);
+      const res = await api.get(`/manual-class/get-label/${awb}`, { responseType: 'blob' });
+      saveBlob(res.data, `label-${awb}.pdf`);
     } catch (e) { alert(e.message || 'Label download failed'); }
     finally { setBusy(id, null); }
   };
@@ -147,8 +166,7 @@ export default function ManualPro() {
     if (ids.length === 0) return alert('Select one or more un-synced orders first.');
     setBulkBusy('sync');
     try {
-      const res = await api.post('/api/manual-class/sync-shipment/bulk', { registrationIds: ids });
-      const d = await res.json();
+      const d = await api.post('/manual-class/sync-shipment/bulk', { registrationIds: ids }).then(r => r.data);
       if (d.results) {
         const awbMap = {};
         d.results.forEach(r => { if (r.awb) awbMap[r.registrationId] = r.awb; });
@@ -175,8 +193,8 @@ export default function ManualPro() {
       const failed = [];
       for (const awb of awbs) {
         try {
-          const bytes = await api.getPdfBytes(`/api/manual-class/get-label/${awb}`);
-          const src   = await PDFDocument.load(bytes);
+          const res   = await api.get(`/manual-class/get-label/${awb}`, { responseType: 'arraybuffer' });
+          const src   = await PDFDocument.load(res.data);
           const pages = await merged.copyPages(src, src.getPageIndices());
           pages.forEach(p => merged.addPage(p));
         } catch (_) { failed.push(awb); }
@@ -186,7 +204,7 @@ export default function ManualPro() {
         return;
       }
       const out = await merged.save();
-      api.saveBlob(out, `labels-${merged.getPageCount()}.pdf`);
+      saveBlob(out, `labels-${merged.getPageCount()}.pdf`);
       if (failed.length) alert(`Generated ${awbs.length - failed.length} label(s). Failed: ${failed.join(', ')}`);
     } catch (e) { alert(e.message || 'Bulk label generation failed'); }
     finally { setBulkBusy(''); }
