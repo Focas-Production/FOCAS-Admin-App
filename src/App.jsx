@@ -10,6 +10,7 @@ import Sales from './pages/Sales'
 import Inventory from './pages/Inventory'
 import Payments from './pages/Payments'
 import Accounts from './pages/Accounts'
+import ManualPro from './pages/ManualPro'
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth()
@@ -46,6 +47,7 @@ export default function App() {
             <Route path="inventory" element={<Inventory />} />
             <Route path="payments" element={<Payments />} />
             <Route path="accounts" element={<Accounts />} />
+            <Route path="manual-pro" element={<ManualPro />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

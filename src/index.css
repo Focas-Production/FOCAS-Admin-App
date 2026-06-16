@@ -1,1 +1,7 @@
 @import "tailwindcss";
+
+/* Manual Pro detail drawer slide-in */
+@keyframes mc-slide-in {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}

@@ -14,6 +14,8 @@ const nav = [
   { type: 'divider', label: 'Payments' },
   { label: 'Payment Links', to: '/payments', icon: '₹' },
   { label: 'Accounts',      to: '/accounts', icon: '⚖' },
+  { type: 'divider', label: 'Ads' },
+  { label: 'Manual Pro',    to: '/manual-pro', icon: '⬢' },
 ]
 
 export default function Sidebar() {
