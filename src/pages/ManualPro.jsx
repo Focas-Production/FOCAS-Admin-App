@@ -62,6 +62,7 @@ export default function ManualPro() {
   const [filters, setFilters] = useState(EMPTY);
   const [inputQ,  setInputQ]  = useState('');
   const [selected, setSelected] = useState(null);
+  const [statusModal, setStatusModal] = useState(null);      // { order } — shows shipment.statusHistory
   const [picked,   setPicked]   = useState(() => new Set()); // selected row ids for bulk ops
   const [rateModal, setRateModal] = useState(null);          // { name, loading, address, cost, error }
   const [busyById, setBusyById] = useState({});              // { [id]: 'rate' | 'sync' | 'label' }
@@ -309,17 +310,17 @@ export default function ManualPro() {
                     style={{ cursor: 'pointer', width: 15, height: 15 }}
                   />
                 </th>
-                {['#','Date','Name','Phone','Group','Amount','Payment','Order ID','Action'].map(h => (
+                {['#','Date','Name','Phone','Group','Amount','Payment','Order ID','Status','Action'].map(h => (
                   <th key={h} style={th}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={10} style={{ ...td, textAlign: 'center', padding: 56, color: '#94a3b8' }}>Loading…</td></tr>
+                <tr><td colSpan={11} style={{ ...td, textAlign: 'center', padding: 56, color: '#94a3b8' }}>Loading…</td></tr>
               )}
               {!loading && rows.length === 0 && (
-                <tr><td colSpan={10} style={{ ...td, textAlign: 'center', padding: 56, color: '#94a3b8' }}>No orders found.</td></tr>
+                <tr><td colSpan={11} style={{ ...td, textAlign: 'center', padding: 56, color: '#94a3b8' }}>No orders found.</td></tr>
               )}
               {!loading && rows.map((o, i) => {
                 const awb  = o.shipment?.awb;
@@ -350,6 +351,27 @@ export default function ManualPro() {
                   </td>
                   <td style={td}><Badge value={o.paymentStatus} /></td>
                   <td style={{ ...td, color: '#64748b', fontSize: 12, fontFamily: 'monospace', whiteSpace: 'nowrap' }}>{o.razorpayOrderId || '—'}</td>
+                  <td style={td} onClick={e => e.stopPropagation()}>
+                    {(() => {
+                      const hist   = o.shipment?.statusHistory || [];
+                      const latest = o.shipment?.trackingStatus || (hist.length ? hist[hist.length - 1].status : null);
+                      if (!latest) return <span style={{ color: '#cbd5e1', fontSize: 12 }}>—</span>;
+                      const delivered = String(latest).toLowerCase() === 'delivered';
+                      return (
+                        <button
+                          onClick={() => setStatusModal({ order: o })}
+                          title="View status history"
+                          style={{
+                            ...actionBtn('#0f172a'),
+                            background: delivered ? '#dcfce7' : '#eef2ff',
+                            color:      delivered ? '#15803d' : '#4338ca',
+                          }}
+                        >
+                          {latest}
+                        </button>
+                      );
+                    })()}
+                  </td>
                   <td style={td} onClick={e => e.stopPropagation()}>
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                       {awb
@@ -429,6 +451,73 @@ export default function ManualPro() {
       {rateModal && (
         <RatePopup data={rateModal} onClose={() => setRateModal(null)} />
       )}
+
+      {/* ── Status history popup ────────────────────────────────────── */}
+      {statusModal && (
+        <StatusHistoryPopup order={statusModal.order} onClose={() => setStatusModal(null)} />
+      )}
+    </div>
+  );
+}
+
+/* ── Shipment status history popup ───────────────────────────────── */
+function StatusHistoryPopup({ order, onClose }) {
+  const ship    = order.shipment || {};
+  const history = [...(ship.statusHistory || [])].sort(
+    (a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0)
+  );
+  const fmt = (d) => d ? new Date(d).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, zIndex: 110 }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{ background: '#fff', borderRadius: 16, width: 460, maxWidth: '92vw', maxHeight: '82vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 22px', borderBottom: '1.5px solid #e2e8f0', flexShrink: 0 }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 900, color: '#0f172a' }}>Status History</div>
+            <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>
+              {order.name}{ship.awb ? ` · AWB ${ship.awb}` : ''}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: '#f1f5f9', border: 'none', borderRadius: 8, width: 32, height: 32, fontSize: 17, fontWeight: 700, color: '#64748b', cursor: 'pointer' }}>×</button>
+        </div>
+
+        <div style={{ padding: '18px 22px', overflowY: 'auto' }}>
+          {ship.trackingStatus && (
+            <div style={{ background: '#eef2ff', border: '1.5px solid #c7d2fe', borderRadius: 12, padding: '12px 16px', marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#6366f1', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Current Status</div>
+              <div style={{ fontSize: 16, fontWeight: 900, color: '#3730a3', marginTop: 2 }}>{ship.trackingStatus}</div>
+              {ship.trackingLocation && <div style={{ fontSize: 12, color: '#6366f1', marginTop: 2 }}>{ship.trackingLocation}</div>}
+            </div>
+          )}
+
+          {history.length === 0 ? (
+            <div style={{ color: '#94a3b8', fontSize: 14, padding: '20px 0', textAlign: 'center' }}>No status history yet.</div>
+          ) : (
+            <div>
+              {history.map((h, i) => (
+                <div key={i} style={{ display: 'flex', gap: 12, paddingBottom: 16, position: 'relative' }}>
+                  {/* timeline dot + line */}
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+                    <span style={{ width: 11, height: 11, borderRadius: 999, background: i === 0 ? GREEN : '#cbd5e1', marginTop: 3 }} />
+                    {i < history.length - 1 && <span style={{ flex: 1, width: 2, background: '#e2e8f0', marginTop: 2 }} />}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>{h.status || '—'}</div>
+                    {h.location && <div style={{ fontSize: 12, color: '#64748b', marginTop: 1 }}>{h.location}</div>}
+                    <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 1 }}>{fmt(h.timestamp)}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
