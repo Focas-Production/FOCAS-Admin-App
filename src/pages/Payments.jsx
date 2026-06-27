@@ -157,9 +157,9 @@ function CreateModal({ onClose, onCreated }) {
   const [error,   setError]   = useState('')
   const [result,  setResult]  = useState(null)
 
-  // Load all products
+  // Load all products (default endpoint paginates at 20 — request the full catalog)
   useEffect(() => {
-    api.get('/admin/products')
+    api.get('/admin/products?limit=10000')
       .then(({ data }) => setProducts(data.products || []))
       .catch(() => {})
       .finally(() => setLoadingProds(false))
