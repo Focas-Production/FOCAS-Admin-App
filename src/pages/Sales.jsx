@@ -31,7 +31,7 @@ export default function Sales() {
   const [productsTotalPages, setProductsTotalPages] = useState(1)
   const [loading, setLoading]   = useState(true)
 
-  const PRODUCTS_PER_PAGE = 10
+  const PRODUCTS_PER_PAGE = 20
 
   const [filters, setFilters] = useState({
     dateFrom: monthStart(),
