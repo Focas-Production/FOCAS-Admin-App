@@ -27,7 +27,11 @@ export default function Sales() {
   const [summary, setSummary]   = useState(null)
   const [timeline, setTimeline] = useState([])
   const [topProducts, setTopProducts] = useState([])
+  const [productsPage, setProductsPage] = useState(1)
+  const [productsTotalPages, setProductsTotalPages] = useState(1)
   const [loading, setLoading]   = useState(true)
+
+  const PRODUCTS_PER_PAGE = 10
 
   const [filters, setFilters] = useState({
     dateFrom: monthStart(),
@@ -48,7 +52,8 @@ export default function Sales() {
       timelineParams.set('groupBy', filters.groupBy)
 
       const topParams = new URLSearchParams(params)
-      topParams.set('limit', '10')
+      topParams.set('limit', String(PRODUCTS_PER_PAGE))
+      topParams.set('page', String(productsPage))
 
       const [sumRes, tlRes, topRes] = await Promise.all([
         api.get(`/admin/sales/summary?${params}`),
@@ -59,17 +64,19 @@ export default function Sales() {
       setSummary(sumRes.data)
       setTimeline(tlRes.data.timeline || [])
       setTopProducts(topRes.data.products || [])
+      setProductsTotalPages(topRes.data.totalPages || 1)
     } catch (err) {
       console.error(err)
     } finally {
       setLoading(false)
     }
-  }, [filters])
+  }, [filters, productsPage])
 
   useEffect(() => { load() }, [load])
 
   function setFilter(key, val) {
     setFilters((f) => ({ ...f, [key]: val }))
+    setProductsPage(1)
   }
 
   const maxRevenue = Math.max(...timeline.map((r) => r.totalRevenue), 1)
@@ -117,7 +124,7 @@ export default function Sales() {
           className="px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 font-medium">
           Apply
         </button>
-        <button onClick={() => setFilters({ dateFrom: monthStart(), dateTo: today(), source: '', groupBy: 'day' })}
+        <button onClick={() => { setFilters({ dateFrom: monthStart(), dateTo: today(), source: '', groupBy: 'day' }); setProductsPage(1) }}
           className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg">
           Reset
         </button>
@@ -195,12 +202,12 @@ export default function Sales() {
         </div>
 
         {/* Top Products */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
           <div className="px-5 py-4 border-b border-gray-100">
-            <h3 className="font-semibold text-gray-800">Top Products</h3>
+            <h3 className="font-semibold text-gray-800">Products</h3>
             <p className="text-xs text-gray-400 mt-0.5">by revenue</p>
           </div>
-          <div className="divide-y divide-gray-50">
+          <div className="divide-y divide-gray-50 flex-1">
             {loading ? (
               [...Array(6)].map((_, i) => (
                 <div key={i} className="px-5 py-3 animate-pulse flex gap-3">
@@ -217,7 +224,7 @@ export default function Sales() {
               topProducts.map((p, i) => (
                 <div key={p._id} className="px-5 py-3 flex items-center gap-3">
                   <span className="w-6 h-6 rounded-full bg-gray-100 text-gray-500 text-xs font-bold flex items-center justify-center flex-shrink-0">
-                    {i + 1}
+                    {(productsPage - 1) * PRODUCTS_PER_PAGE + i + 1}
                   </span>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-800 truncate">{p.name}</p>
@@ -231,6 +238,26 @@ export default function Sales() {
               ))
             )}
           </div>
+
+          {!loading && topProducts.length > 0 && (
+            <div className="px-5 py-3 border-t border-gray-100 flex items-center justify-between text-sm">
+              <span className="text-xs text-gray-400">Page {productsPage} of {productsTotalPages}</span>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => setProductsPage((p) => Math.max(p - 1, 1))}
+                  disabled={productsPage <= 1}
+                  className="px-3 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">
+                  Prev
+                </button>
+                <button
+                  onClick={() => setProductsPage((p) => Math.min(p + 1, productsTotalPages))}
+                  disabled={productsPage >= productsTotalPages}
+                  className="px-3 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
       </div>
