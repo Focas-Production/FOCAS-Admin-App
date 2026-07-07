@@ -1124,7 +1124,21 @@ export default function AllOrders() {
                       <div className="text-gray-400 text-xs">{o.customerPhone || o.userId?.phoneNumber || ''}</div>
                     </td>
                     <td className="px-4 py-3"><StatusBadge value={o.source} /></td>
-                    <td className="px-4 py-3 text-gray-600 text-xs">{(o.items || []).length} item(s)</td>
+                    <td className="px-4 py-3 text-gray-600 text-xs max-w-[240px]">
+                      {(o.items || []).length === 0 ? (
+                        <div className="text-gray-800">—</div>
+                      ) : (
+                        <ul className="space-y-0.5 text-gray-800">
+                          {(o.items || []).map((i, idx) => (
+                            <li key={idx} className="flex gap-1.5">
+                              <span className="text-gray-400 flex-shrink-0">{idx + 1}.</span>
+                              <span className="break-words">{i.name || i.productId?.name || 'Unknown'}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      <div className="text-gray-400 mt-1">{(o.items || []).length} item(s)</div>
+                    </td>
                     <td className="px-4 py-3 text-gray-700 font-medium text-xs">{fmtAmount(o.items)}</td>
                     <td className="px-4 py-3"><StatusBadge value={o.status} /></td>
                     <td className="px-4 py-3"><StatusBadge value={o.fulfillmentStatus} /></td>
