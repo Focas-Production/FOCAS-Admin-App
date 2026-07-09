@@ -31,6 +31,8 @@ export default function Accounts() {
   const [typeFilter, setTypeFilter]   = useState('')
   const [loadingS, setLoadingS]       = useState(true)
   const [loadingE, setLoadingE]       = useState(true)
+  const [showAdd, setShowAdd]         = useState(false)
+  const [deletingId, setDeletingId]   = useState(null)
 
   const loadSummary = useCallback(async () => {
     setLoadingS(true)
@@ -63,6 +65,25 @@ export default function Accounts() {
     }
   }, [page, limit, typeFilter])
 
+  const addReceivable = async (form) => {
+    await api.post('/accounts/manual-receivables', form)
+    setShowAdd(false)
+    loadSummary()
+  }
+
+  const removeReceivable = async (id) => {
+    if (!window.confirm('Remove this manual receivable? This does not affect Sales or Cash Collected.')) return
+    setDeletingId(id)
+    try {
+      await api.delete(`/accounts/manual-receivables/${id}`)
+      loadSummary()
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   useEffect(() => { loadSummary() }, [loadSummary])
   useEffect(() => { loadEntries() }, [loadEntries])
 
@@ -88,37 +109,63 @@ export default function Accounts() {
       )}
 
       {/* Receivables table */}
-      {receivables.length > 0 && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between gap-3">
+          <div>
             <h3 className="font-semibold text-gray-800">Outstanding Receivables</h3>
             <p className="text-xs text-gray-400 mt-0.5">Customers with pending EMI payments</p>
           </div>
+          <button onClick={() => setShowAdd(true)}
+            className="inline-flex items-center gap-1.5 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold px-3.5 py-2 rounded-lg transition-colors">
+            <span className="text-base leading-none">+</span> Add Receivable
+          </button>
+        </div>
+        {receivables.length === 0 ? (
+          <p className="px-5 py-8 text-center text-sm text-gray-400">No outstanding receivables. Use “Add Receivable” to record a manual / legacy balance.</p>
+        ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-100">
-                <tr>
-                  {['Customer', 'Phone', 'Product', 'Total', 'EMI', 'Outstanding'].map((h) => (
-                    <th key={h} className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-5 py-3">{h}</th>
-                  ))}
+                <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  <th className="px-5 py-3">Customer</th>
+                  <th className="px-5 py-3">Phone</th>
+                  <th className="px-5 py-3 w-1/3">Product</th>
+                  <th className="px-5 py-3">Total</th>
+                  <th className="px-5 py-3">EMI</th>
+                  <th className="px-5 py-3">Outstanding</th>
+                  <th className="px-2 py-3 w-8"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {receivables.map((r) => (
-                  <tr key={r.paymentId} className="hover:bg-gray-50">
-                    <td className="px-5 py-3 font-medium text-gray-800">{r.name}</td>
-                    <td className="px-5 py-3 text-gray-500">{r.phone}</td>
-                    <td className="px-5 py-3 text-gray-600 max-w-xs truncate">{r.product}</td>
-                    <td className="px-5 py-3 font-semibold text-gray-800">{fmt(r.full_amount)}</td>
-                    <td className="px-5 py-3 text-gray-500">{r.emi_paid}/{r.emi_total}</td>
+                  <tr key={r.paymentId || r.manualId} className="hover:bg-gray-50">
+                    <td className="px-5 py-3 font-medium text-gray-800">
+                      {r.name}
+                      {r.manual && <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-amber-700 bg-amber-200/70 px-1.5 py-0.5 rounded">Manual</span>}
+                    </td>
+                    <td className="px-5 py-3 text-gray-500">{r.phone || '—'}</td>
+                    <td className="px-5 py-3 text-gray-600">{r.product || '—'}</td>
+                    <td className="px-5 py-3 font-semibold text-gray-800">{r.full_amount != null ? fmt(r.full_amount) : '—'}</td>
+                    <td className="px-5 py-3 text-gray-500">{r.emi_paid != null && r.emi_total != null ? `${r.emi_paid}/${r.emi_total}` : '—'}</td>
                     <td className="px-5 py-3 font-bold text-orange-600">{fmt(r.outstanding)}</td>
+                    <td className="px-2 py-3 text-center w-8">
+                      {/* Only manual receivables can be deleted; sale-backed rows are read-only */}
+                      {r.manual && (
+                        <button onClick={() => removeReceivable(r.manualId)} disabled={deletingId === r.manualId}
+                          className="text-gray-400 hover:text-red-500 disabled:opacity-40 text-sm font-semibold" title="Delete manual receivable">
+                          {deletingId === r.manualId ? '…' : '✕'}
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </div>
-      )}
+        )}
+      </div>
+
+      {showAdd && <AddReceivableModal onClose={() => setShowAdd(false)} onSave={addReceivable} />}
 
       {/* Ledger entries */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
@@ -197,5 +244,74 @@ export default function Accounts() {
       </div>
 
     </div>
+  )
+}
+
+// ── Add manual / legacy receivable ──────────────────────────────────────────
+// Only affects the Receivables (Pending) card + list — never Sales or Cash Collected.
+function AddReceivableModal({ onClose, onSave }) {
+  const [form, setForm] = useState({
+    name: '', phone: '', product: '', full_amount: '', emi_paid: '', emi_total: '', outstanding: '', note: '',
+  })
+  const [saving, setSaving] = useState(false)
+  const [error, setError]   = useState('')
+
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
+
+  const submit = async (e) => {
+    e.preventDefault()
+    if (!form.name.trim())               return setError('Customer name is required')
+    if (!(Number(form.outstanding) > 0)) return setError('Outstanding must be greater than 0')
+    setSaving(true); setError('')
+    try {
+      await onSave(form)
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to save')
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <h3 className="font-semibold text-gray-800">Add Manual Receivable</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-lg leading-none">✕</button>
+        </div>
+        <form onSubmit={submit} className="px-5 py-4 space-y-3">
+          <p className="text-xs text-gray-400 -mt-1">Records a legacy / carried-forward balance. Adds to “Receivables (Pending)” only — it does not change Total Sales or Cash Collected.</p>
+
+          <Field label="Customer name *"><input value={form.name} onChange={set('name')} autoFocus className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" placeholder="e.g. ASWIN R" /></Field>
+          <Field label="Phone"><input value={form.phone} onChange={set('phone')} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" placeholder="optional" /></Field>
+          <Field label="Product"><input value={form.product} onChange={set('product')} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" placeholder="optional — full product name" /></Field>
+          <div className="grid grid-cols-3 gap-3">
+            <Field label="Total fee"><input type="number" value={form.full_amount} onChange={set('full_amount')} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" placeholder="optional" /></Field>
+            <Field label="EMI paid"><input type="number" value={form.emi_paid} onChange={set('emi_paid')} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" placeholder="—" /></Field>
+            <Field label="EMI total"><input type="number" value={form.emi_total} onChange={set('emi_total')} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" placeholder="—" /></Field>
+          </div>
+          <Field label="Outstanding (owed) *"><input type="number" value={form.outstanding} onChange={set('outstanding')} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" placeholder="e.g. 24000" /></Field>
+          <Field label="Note"><input value={form.note} onChange={set('note')} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" placeholder="optional remark" /></Field>
+
+          {error && <p className="text-xs text-red-500">{error}</p>}
+
+          <div className="flex justify-end gap-2 pt-1">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
+            <button type="submit" disabled={saving}
+              className="px-4 py-2 text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 rounded-lg disabled:opacity-50">
+              {saving ? 'Saving…' : 'Add Receivable'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function Field({ label, children }) {
+  return (
+    <label className="block">
+      <span className="block text-xs font-semibold text-gray-500 mb-1">{label}</span>
+      {children}
+    </label>
   )
 }
