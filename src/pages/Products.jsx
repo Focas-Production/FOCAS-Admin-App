@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import api from '../services/api'
 import Pagination from '../components/Pagination'
 
 const LEVELS = ['Foundation', 'Intermediate', 'Final']
+
 const empty = {
   name: '', description: '', price: '', originalPrice: '', imageUrl: '',
+  productUrl: '', websiteUrl: '',
   shopifyProductId: '', shopifyPrice: '', comboPrice: '',
   category: '', subCategory: '', level: '',
   weight: '', shipToHome: false, isCourse: false,
@@ -23,10 +25,30 @@ export default function Products() {
   const [error, setError]           = useState('')
   const [deleteConfirm, setDeleteConfirm] = useState(null)
   const [filter, setFilter]         = useState('all')
+  const [search, setSearch]         = useState('')
   const [page, setPage]             = useState(1)
   const [limit, setLimit]           = useState(20)
   const [pagination, setPagination] = useState({ total: 0, totalPages: 1 })
   const [counts, setCounts]         = useState({ catalog: 0, custom: 0, bundle: 0 })
+
+  const [copied, setCopied] = useState('')
+
+  async function copyLink(text, key = 'link') {
+    if (!text) return
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      // Fallback for non-HTTPS / older browsers
+      const ta = document.createElement('textarea')
+      ta.value = text
+      document.body.appendChild(ta)
+      ta.select()
+      try { document.execCommand('copy') } catch {}
+      document.body.removeChild(ta)
+    }
+    setCopied(key)
+    setTimeout(() => setCopied(''), 1500)
+  }
 
   // Bundle item picker state
   const [bundleProductsList, setBundleProductsList] = useState([])
@@ -35,10 +57,11 @@ export default function Products() {
   const [bundleCustomName, setBundleCustomName]     = useState('')
   const [bundleCustomPrice, setBundleCustomPrice]   = useState('')
 
-  async function load(p = page, l = limit, f = filter) {
+  async function load(p = page, l = limit, f = filter, s = search) {
     setLoading(true)
     try {
       const params = new URLSearchParams({ page: p, limit: l, filter: f })
+      if (s.trim()) params.set('search', s.trim())
       const { data } = await api.get(`/admin/products?${params}`)
       setProducts(data.products || [])
       setPagination(data.pagination || { total: 0, totalPages: 1 })
@@ -51,6 +74,17 @@ export default function Products() {
   }
 
   useEffect(() => { load() }, [])
+
+  // Debounced search: reset to page 1 and reload when the term settles
+  const firstSearch = useRef(true)
+  useEffect(() => {
+    if (firstSearch.current) { firstSearch.current = false; return }
+    const t = setTimeout(() => {
+      setPage(1)
+      load(1, limit, filter, search)
+    }, 350)
+    return () => clearTimeout(t)
+  }, [search])
 
   async function ensureBundleProductsLoaded() {
     if (bundleProductsList.length > 0) return
@@ -84,6 +118,8 @@ export default function Products() {
         price: product.price ?? '',
         originalPrice: product.originalPrice ?? '',
         imageUrl: product.imageUrl || '',
+        productUrl: product.productUrl || '',
+        websiteUrl: product.websiteUrl || '',
         shopifyProductId: product.shopifyProductId || '',
         shopifyPrice: product.shopifyPrice ?? '',
         comboPrice: product.comboPrice ?? '',
@@ -168,6 +204,8 @@ export default function Products() {
       shopifyPrice: d.shopifyPrice !== '' ? Number(d.shopifyPrice) : null,
       comboPrice: d.comboPrice !== '' ? Number(d.comboPrice) : null,
       imageUrl: d.imageUrl || undefined,
+      productUrl: d.productUrl?.trim() || null,
+      websiteUrl: d.websiteUrl?.trim() || null,
       shopifyProductId: d.shopifyProductId || undefined,
       category: d.category || undefined,
       subCategory: d.subCategory || undefined,
@@ -191,7 +229,7 @@ export default function Products() {
         await api.put(`/admin/products/${modal.id}`, payload)
       }
       setModal(null)
-      await load(page, limit, filter)
+      await load(page, limit, filter, search)
     } catch (err) {
       setError(err.response?.data?.error || 'Save failed')
     } finally {
@@ -203,7 +241,7 @@ export default function Products() {
     try {
       await api.delete(`/admin/products/${id}`)
       setDeleteConfirm(null)
-      await load(page, limit, filter)
+      await load(page, limit, filter, search)
     } catch (err) {
       alert(err.response?.data?.error || 'Delete failed')
     }
@@ -212,18 +250,18 @@ export default function Products() {
   function handleFilterChange(f) {
     setFilter(f)
     setPage(1)
-    load(1, limit, f)
+    load(1, limit, f, search)
   }
 
   function handlePageChange(p) {
     setPage(p)
-    load(p, limit, filter)
+    load(p, limit, filter, search)
   }
 
   function handleLimitChange(l) {
     setLimit(l)
     setPage(1)
-    load(1, l, filter)
+    load(1, l, filter, search)
   }
 
   const catalogCount = counts.catalog
@@ -253,6 +291,29 @@ export default function Products() {
         >
           + New Product
         </button>
+      </div>
+
+      {/* Search */}
+      <div className="relative max-w-md">
+        <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z" />
+        </svg>
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by name, category, or Shopify ID…"
+          className="w-full border border-gray-300 rounded-lg pl-9 pr-9 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        {search && (
+          <button
+            onClick={() => setSearch('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-lg leading-none"
+            title="Clear"
+          >
+            &times;
+          </button>
+        )}
       </div>
 
       {/* Filter tabs */}
@@ -371,6 +432,24 @@ export default function Products() {
                     <td className="px-4 py-3 font-mono text-xs text-gray-400 truncate max-w-[120px]">{p.shopifyProductId || '—'}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1.5">
+                        {p.productUrl && (
+                          <button
+                            onClick={() => copyLink(p.productUrl, `row-combo-${p._id}`)}
+                            title={p.productUrl}
+                            className="px-2 py-1 bg-purple-50 text-purple-600 text-xs rounded hover:bg-purple-100"
+                          >
+                            {copied === `row-combo-${p._id}` ? 'Copied!' : 'Combo'}
+                          </button>
+                        )}
+                        {p.websiteUrl && (
+                          <button
+                            onClick={() => copyLink(p.websiteUrl, `row-web-${p._id}`)}
+                            title={p.websiteUrl}
+                            className="px-2 py-1 bg-sky-50 text-sky-600 text-xs rounded hover:bg-sky-100"
+                          >
+                            {copied === `row-web-${p._id}` ? 'Copied!' : 'Website'}
+                          </button>
+                        )}
                         <button
                           onClick={() => openEdit(p)}
                           className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded hover:bg-gray-200"
@@ -450,6 +529,76 @@ export default function Products() {
                   <label className="block text-xs font-medium text-gray-700 mb-1">Image URL</label>
                   <input value={modal.data.imageUrl} onChange={(e) => setField('imageUrl', e.target.value)}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+
+                {/* Direct purchase links (optional) — paste manually */}
+                <div className="col-span-2 border border-gray-200 rounded-lg p-4 bg-gray-50/50 space-y-3">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Direct Purchase Links (optional)</p>
+
+                  {/* Product ID — copy to build the links above */}
+                  {modal.mode === 'edit' && modal.id && (
+                    <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2">
+                      <span className="text-xs font-medium text-gray-500 shrink-0">Product ID</span>
+                      <code className="flex-1 text-xs font-mono text-gray-800 truncate">{modal.id}</code>
+                      <button
+                        type="button"
+                        onClick={() => copyLink(modal.id, 'productId')}
+                        className="px-2.5 py-1 text-xs rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 font-medium shrink-0"
+                      >
+                        {copied === 'productId' ? 'Copied!' : 'Copy ID'}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Product URL 1 — Custom / Combo store */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">
+                      <span className="inline-block text-[10px] font-semibold bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded mr-1.5 align-middle">COMBO</span>
+                      Combo Store Link
+                      <span className="ml-1.5 text-xs text-gray-400 font-normal">(e.g. store.focasedu.com/product/&lt;id&gt;)</span>
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        value={modal.data.productUrl}
+                        onChange={(e) => setField('productUrl', e.target.value)}
+                        placeholder="https://store.focasedu.com/product/<id>"
+                        className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => copyLink(modal.data.productUrl, 'combo')}
+                        disabled={!modal.data.productUrl?.trim()}
+                        className="px-3 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed font-medium shrink-0"
+                      >
+                        {copied === 'combo' ? 'Copied!' : 'Copy'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Product URL 2 — Website */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">
+                      <span className="inline-block text-[10px] font-semibold bg-sky-100 text-sky-700 px-1.5 py-0.5 rounded mr-1.5 align-middle">WEBSITE</span>
+                      Website Link
+                      <span className="ml-1.5 text-xs text-gray-400 font-normal">(e.g. focasedu.com/course/&lt;id&gt;?pay=1)</span>
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        value={modal.data.websiteUrl}
+                        onChange={(e) => setField('websiteUrl', e.target.value)}
+                        placeholder="https://focasedu.com/course/<id>?pay=1"
+                        className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => copyLink(modal.data.websiteUrl, 'website')}
+                        disabled={!modal.data.websiteUrl?.trim()}
+                        className="px-3 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed font-medium shrink-0"
+                      >
+                        {copied === 'website' ? 'Copied!' : 'Copy'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Category</label>
