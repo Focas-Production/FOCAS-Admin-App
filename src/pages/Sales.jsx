@@ -2,8 +2,16 @@ import { useEffect, useState, useCallback } from 'react'
 import api from '../services/api'
 
 const fmt = (n) => `₹${(n || 0).toLocaleString('en-IN')}`
-const today = () => new Date().toISOString().slice(0, 10)
-const monthStart = () => new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10)
+
+// Format as YYYY-MM-DD from local calendar parts. Using toISOString() here would
+// convert to UTC and shift the date back a day for IST (e.g. 1 Jul → 30 Jun).
+const ymd = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+const today = () => ymd(new Date())
+const monthStart = () => {
+  const now = new Date()
+  return ymd(new Date(now.getFullYear(), now.getMonth(), 1))
+}
 
 function SummaryCard({ label, value, sub, color }) {
   return (
