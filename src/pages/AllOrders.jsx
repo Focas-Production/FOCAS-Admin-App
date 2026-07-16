@@ -641,6 +641,7 @@ export default function AllOrders() {
   const [selectedId, setSelectedId] = useState(null)
   const [actionLoading, setActionLoading] = useState({})
   const [rateModal, setRateModal] = useState(null)
+  const [addressOrder, setAddressOrder] = useState(null)   // custom order getting a manual address
   const [exporting, setExporting] = useState(false)
   const [showGpay, setShowGpay] = useState(false)
   const [selectedIds, setSelectedIds] = useState([])   // bulk-select on Delivery tab
@@ -709,6 +710,14 @@ export default function AllOrders() {
     } finally {
       setActionLoading((p) => { const n = { ...p }; delete n[id]; return n })
     }
+  }
+
+  // Save a manual delivery address on a custom order, then reload so the Sync/Rate
+  // buttons appear (backend sets hasPhysicalItem + manualDelivery + show_sync).
+  async function handleSaveAddress(id, address) {
+    await api.patch(`/admin/purchases/${id}/address`, address)
+    setAddressOrder(null)
+    await load(pagination.page, filters, sourceTab, limit)
   }
 
   async function handleGetRate(id) {
@@ -1151,8 +1160,19 @@ export default function AllOrders() {
                     </td>
                     <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{fmt(o.createdAt)}</td>
                     <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                      {/* Razorpay payment-link order (no address captured at checkout),
+                          not yet synced → add or edit its delivery address */}
+                      {o.is_razorpay_link && !o.shipment?.awb && (
+                        <button
+                          onClick={() => setAddressOrder(o)}
+                          className={`px-2 py-1 text-xs rounded whitespace-nowrap font-medium ${o.address?.line1 ? 'bg-gray-100 text-gray-700 hover:bg-gray-200' : 'bg-amber-100 text-amber-700 hover:bg-amber-200'}`}
+                        >
+                          {o.address?.line1 ? 'Edit Address' : '+ Add Address'}
+                        </button>
+                      )}
                       {(o.hasPhysicalItem || (o.items || []).some(i => i.productId?.shipToHome)) && (
-                        <div className="flex items-center gap-1.5">
+                        <>
                           {o.shipment?.awb ? (
                             <button
                               onClick={() => handleDownloadLabel(o.shipment.awb, o._id)}
@@ -1198,8 +1218,9 @@ export default function AllOrders() {
                               </>
                             )
                           })() : null}
-                        </div>
+                        </>
                       )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -1294,6 +1315,95 @@ export default function AllOrders() {
           onSuccess={() => { setShowGpay(false); load(1, filters, sourceTab, limit) }}
         />
       )}
+
+      {/* Add manual delivery address to a custom order */}
+      {addressOrder && (
+        <AddressModal
+          order={addressOrder}
+          onClose={() => setAddressOrder(null)}
+          onSave={handleSaveAddress}
+        />
+      )}
+    </div>
+  )
+}
+
+// ─── Add-address modal (custom orders) ────────────────────────────────────────
+function AddressModal({ order, onClose, onSave }) {
+  const [form, setForm] = useState({
+    line1: order.address?.line1 || '',
+    line2: order.address?.line2 || '',
+    city: order.address?.city || '',
+    state: order.address?.state || '',
+    pincode: displayPincode(order.address || {}),
+    country: order.address?.country || 'India',
+  })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
+
+  async function submit(e) {
+    e.preventDefault()
+    if (!form.line1.trim())   return setError('Address Line 1 is required')
+    if (!form.city.trim())    return setError('City is required')
+    if (!form.state.trim())   return setError('State is required')
+    if (!form.pincode.trim()) return setError('Pincode is required')
+    setSaving(true); setError('')
+    try {
+      await onSave(order._id, form)
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to save address')
+      setSaving(false)
+    }
+  }
+
+  const inp = 'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="font-semibold text-gray-900">Add Delivery Address</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+        </div>
+        <p className="text-xs text-gray-400 mb-4">Order <span className="font-mono">{order.orderId}</span> · {order.customerName || '—'}. After saving, Sync &amp; Get Rate become available.</p>
+        <form onSubmit={submit} className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Address Line 1 <span className="text-red-500">*</span></label>
+            <input value={form.line1} onChange={set('line1')} autoFocus className={inp} placeholder="House / street" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Address Line 2</label>
+            <input value={form.line2} onChange={set('line2')} className={inp} placeholder="Area / landmark (optional)" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">City <span className="text-red-500">*</span></label>
+              <input value={form.city} onChange={set('city')} className={inp} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">State <span className="text-red-500">*</span></label>
+              <input value={form.state} onChange={set('state')} className={inp} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Pincode <span className="text-red-500">*</span></label>
+              <input value={form.pincode} onChange={set('pincode')} className={inp} inputMode="numeric" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Country</label>
+              <input value={form.country} onChange={set('country')} className={inp} />
+            </div>
+          </div>
+          {error && <p className="text-xs text-red-500">{error}</p>}
+          <div className="flex justify-end gap-2 pt-1">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
+            <button type="submit" disabled={saving} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50">
+              {saving ? 'Saving…' : 'Save Address'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   )
 }
