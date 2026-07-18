@@ -28,6 +28,36 @@ function displayPincode(address = {}) {
   return address.pincode || address.zip || address.postalCode || address.postal_code || ''
 }
 
+// A payment-proof image stored privately in R2. Fetches a short-lived signed URL
+// by its key, then renders the thumbnail (click to open full size in a new tab).
+function ProofImage({ proofKey, name }) {
+  const [url, setUrl]   = useState(null)
+  const [err, setErr]   = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    if (!proofKey) { setErr(true); return }
+    api.get(`/admin/uploads/view?key=${encodeURIComponent(proofKey)}`)
+      .then(({ data }) => { if (alive) setUrl(data.url) })
+      .catch(() => { if (alive) setErr(true) })
+    return () => { alive = false }
+  }, [proofKey])
+
+  if (err) return (
+    <div className="aspect-square rounded-lg border border-gray-200 bg-gray-50 flex items-center justify-center text-[11px] text-gray-400">
+      Unavailable
+    </div>
+  )
+  if (!url) return <div className="aspect-square rounded-lg border border-gray-200 bg-gray-100 animate-pulse" />
+
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" title={name || 'Open proof'} className="block">
+      <img src={url} alt={name || 'Payment proof'}
+        className="w-full aspect-square object-cover rounded-lg border border-gray-200 bg-gray-50 hover:opacity-90 transition-opacity" />
+    </a>
+  )
+}
+
 // ─── Order Detail Drawer ─────────────────────────────────────────────────────
 
 function OrderDrawer({ orderId, onClose }) {
@@ -173,21 +203,32 @@ function OrderDrawer({ orderId, onClose }) {
             </section>
 
             {/* Payment Proof (GPay / offline) */}
-            {order.paymentProofUrl && (
+            {(order.paymentProofs?.length > 0 || order.paymentProofUrl) && (
               <section>
-                <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Payment Proof</h3>
-                <a href={order.paymentProofUrl} target="_blank" rel="noopener noreferrer" className="block">
-                  <img
-                    src={order.paymentProofUrl}
-                    alt="Payment proof"
-                    className="w-full max-h-72 object-contain rounded-lg border border-gray-200 bg-gray-50"
-                    onError={(e) => { e.currentTarget.style.display = 'none' }}
-                  />
-                </a>
-                <a href={order.paymentProofUrl} target="_blank" rel="noopener noreferrer"
-                  className="inline-block mt-2 text-xs text-blue-600 hover:underline break-all">
-                  Open proof ↗
-                </a>
+                <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                  Payment Proof{order.paymentProofs?.length > 1 ? ` (${order.paymentProofs.length})` : ''}
+                </h3>
+                {order.paymentProofs?.length > 0 ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    {order.paymentProofs.map((p, i) => <ProofImage key={p.key || i} proofKey={p.key} name={p.name} />)}
+                  </div>
+                ) : (
+                  // Legacy single-URL proof (older manual orders)
+                  <>
+                    <a href={order.paymentProofUrl} target="_blank" rel="noopener noreferrer" className="block">
+                      <img
+                        src={order.paymentProofUrl}
+                        alt="Payment proof"
+                        className="w-full max-h-72 object-contain rounded-lg border border-gray-200 bg-gray-50"
+                        onError={(e) => { e.currentTarget.style.display = 'none' }}
+                      />
+                    </a>
+                    <a href={order.paymentProofUrl} target="_blank" rel="noopener noreferrer"
+                      className="inline-block mt-2 text-xs text-blue-600 hover:underline break-all">
+                      Open proof ↗
+                    </a>
+                  </>
+                )}
               </section>
             )}
 
@@ -437,9 +478,12 @@ function GpayPaymentModal({ onClose, onSuccess }) {
   const [search,   setSearch]   = useState('')
   const [showList, setShowList] = useState(false)
   const [form, setForm] = useState({
-    name: '', phone: '', productId: '', amount: '', screenshotUrl: '', notes: '',
+    name: '', phone: '', productId: '', amount: '', notes: '',
     hasDelivery: false, line1: '', line2: '', city: '', state: '', pincode: '',
   })
+  const [proofs, setProofs] = useState([])  // { id, name, previewUrl, key, status, error }
+  const fileRef = useRef(null)
+  const uploading = proofs.some((p) => p.status === 'uploading')
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState('')
 
@@ -450,6 +494,47 @@ function GpayPaymentModal({ onClose, onSuccess }) {
   }, [])
 
   function set(key, value) { setForm((f) => ({ ...f, [key]: value })) }
+
+  // Upload selected images straight to R2 via presigned URLs, tracking each one's status.
+  async function handleFiles(fileList) {
+    const files = Array.from(fileList || []).filter((f) => f.type.startsWith('image/'))
+    if (!files.length) return
+    setError('')
+    const entries = files.map((f) => ({
+      id: (crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`),
+      name: f.name, previewUrl: URL.createObjectURL(f), key: null, status: 'uploading', error: '',
+    }))
+    setProofs((prev) => [...prev, ...entries])
+    try {
+      const { data } = await api.post('/admin/uploads/presign', {
+        prefix: 'payment-proofs',
+        files: files.map((f) => ({ name: f.name, contentType: f.type, size: f.size })),
+      })
+      const uploads = data.uploads || []
+      await Promise.all(uploads.map(async (u, i) => {
+        const entry = entries[i]
+        try {
+          const put = await fetch(u.uploadUrl, { method: 'PUT', body: files[i], headers: { 'Content-Type': files[i].type } })
+          if (!put.ok) throw new Error('upload failed')
+          setProofs((prev) => prev.map((p) => (p.id === entry.id ? { ...p, key: u.key, status: 'done' } : p)))
+        } catch {
+          setProofs((prev) => prev.map((p) => (p.id === entry.id ? { ...p, status: 'error', error: 'Upload failed' } : p)))
+        }
+      }))
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Upload failed'
+      const ids = new Set(entries.map((e) => e.id))
+      setProofs((prev) => prev.map((p) => (ids.has(p.id) ? { ...p, status: 'error', error: msg } : p)))
+    }
+  }
+
+  function removeProof(id) {
+    setProofs((prev) => {
+      const t = prev.find((p) => p.id === id)
+      if (t?.previewUrl) URL.revokeObjectURL(t.previewUrl)
+      return prev.filter((p) => p.id !== id)
+    })
+  }
 
   function handleProductChange(id) {
     const prod = products.find((p) => p._id === id)
@@ -467,7 +552,9 @@ function GpayPaymentModal({ onClose, onSuccess }) {
     if (!form.phone.trim()) return setError('Phone number is required')
     if (!form.productId)    return setError('Please select a product')
     if (!form.amount || Number(form.amount) < 1) return setError('Enter a valid amount')
-    if (!form.screenshotUrl.trim()) return setError('Payment proof (screenshot URL) is required')
+    if (uploading) return setError('Please wait for images to finish uploading')
+    const doneProofs = proofs.filter((p) => p.status === 'done' && p.key)
+    if (!doneProofs.length) return setError('Upload at least one payment proof image')
     if (form.hasDelivery) {
       if (!form.line1.trim())   return setError('Address Line 1 is required for delivery')
       if (!form.city.trim())    return setError('City is required for delivery')
@@ -481,7 +568,7 @@ function GpayPaymentModal({ onClose, onSuccess }) {
         phone:         form.phone.trim(),
         productId:     form.productId,
         amount:        Number(form.amount),
-        screenshotUrl: form.screenshotUrl.trim() || undefined,
+        paymentProofs: doneProofs.map((p) => ({ key: p.key, name: p.name })),
         notes:         form.notes.trim() || undefined,
         hasDelivery:   form.hasDelivery,
         address:       form.hasDelivery ? {
@@ -560,13 +647,58 @@ function GpayPaymentModal({ onClose, onSuccess }) {
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Payment Proof (Screenshot URL) <span className="text-red-500">*</span></label>
-            <input type="url" value={form.screenshotUrl} onChange={(e) => set('screenshotUrl', e.target.value)} placeholder="https://… (link to payment screenshot)" className={inputCls} />
-            {form.screenshotUrl.trim() && (
-              <a href={form.screenshotUrl.trim()} target="_blank" rel="noopener noreferrer" className="inline-block mt-1.5 text-xs text-blue-600 hover:underline">
-                Preview proof ↗
-              </a>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              Payment Proof <span className="text-red-500">*</span>
+              <span className="text-gray-400 font-normal"> (upload screenshot(s))</span>
+            </label>
+
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => { handleFiles(e.target.files); e.target.value = '' }}
+            />
+
+            {/* Thumbnails */}
+            {proofs.length > 0 && (
+              <div className="grid grid-cols-4 gap-2 mb-2">
+                {proofs.map((p) => (
+                  <div key={p.id} className="relative aspect-square rounded-lg overflow-hidden border border-gray-200 group">
+                    <img src={p.previewUrl} alt={p.name} className="w-full h-full object-cover" />
+                    {p.status === 'uploading' && (
+                      <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                        <span className="text-[10px] text-white">Uploading…</span>
+                      </div>
+                    )}
+                    {p.status === 'error' && (
+                      <div className="absolute inset-0 bg-red-600/60 flex items-center justify-center">
+                        <span className="text-[10px] text-white px-1 text-center">{p.error || 'Failed'}</span>
+                      </div>
+                    )}
+                    {p.status === 'done' && (
+                      <span className="absolute bottom-1 right-1 bg-green-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px]">✓</span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeProof(p.id)}
+                      className="absolute top-1 right-1 bg-black/60 hover:bg-black/80 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs leading-none"
+                      aria-label="Remove"
+                    >×</button>
+                  </div>
+                ))}
+              </div>
             )}
+
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              className="w-full border-2 border-dashed border-gray-300 rounded-lg py-3 text-sm text-gray-500 hover:border-blue-400 hover:text-blue-600 transition-colors"
+            >
+              + Add image(s)
+            </button>
+            <p className="text-[11px] text-gray-400 mt-1">JPG/PNG/WEBP, up to 10MB each. You can add multiple.</p>
           </div>
 
           <div>
@@ -619,8 +751,8 @@ function GpayPaymentModal({ onClose, onSuccess }) {
             <button type="button" onClick={onClose} className="flex-1 py-2 rounded-lg border border-gray-300 text-gray-600 text-sm hover:bg-gray-50">
               Cancel
             </button>
-            <button type="button" onClick={submit} disabled={saving} className="flex-1 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
-              {saving ? 'Recording…' : 'Record Payment'}
+            <button type="button" onClick={submit} disabled={saving || uploading} className="flex-1 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+              {saving ? 'Recording…' : uploading ? 'Uploading…' : 'Record Payment'}
             </button>
           </div>
         </div>
