@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import api from '../services/api'
 import Pagination from '../components/Pagination'
+import PriceHistoryModal from '../components/PriceHistoryModal'
 
 const LEVELS = ['Foundation', 'Intermediate', 'Final']
 
@@ -15,6 +16,7 @@ const empty = {
   showInComboStore: false,
   isBundle: false,
   bundleItems: [],
+  priceNote: '',
 }
 
 export default function Products() {
@@ -32,6 +34,7 @@ export default function Products() {
   const [counts, setCounts]         = useState({ catalog: 0, custom: 0, bundle: 0 })
 
   const [copied, setCopied] = useState('')
+  const [priceHistoryModal, setPriceHistoryModal] = useState(null)
 
   async function copyLink(text, key = 'link') {
     if (!text) return
@@ -140,6 +143,7 @@ export default function Products() {
           price:      bi.price || 0,
           isCustom:   bi.isCustom || false,
         })),
+        priceNote: '',
       },
     })
     if (product.isBundle) ensureBundleProductsLoaded()
@@ -195,6 +199,14 @@ export default function Products() {
       setError('A bundle must have at least one item')
       return
     }
+    if (d.isCourse && !d.websiteUrl?.trim()) {
+      setError('Website Link is required when "Is Course" is enabled')
+      return
+    }
+    if (d.showInComboStore && !d.productUrl?.trim()) {
+      setError('Combo Store Link is required when "Show in Combo Store" is enabled')
+      return
+    }
     setSaving(true)
     const payload = {
       name: d.name,
@@ -221,6 +233,7 @@ export default function Products() {
       showInComboStore: d.showInComboStore,
       isBundle: d.isBundle,
       bundleItems: d.isBundle ? d.bundleItems : [],
+      priceNote: d.priceNote?.trim() || undefined,
     }
     try {
       if (modal.mode === 'create') {
@@ -432,7 +445,7 @@ export default function Products() {
                     <td className="px-4 py-3 font-mono text-xs text-gray-400 truncate max-w-[120px]">{p.shopifyProductId || '—'}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1.5">
-                        {p.productUrl && (
+                        {p.showInComboStore && p.productUrl && (
                           <button
                             onClick={() => copyLink(p.productUrl, `row-combo-${p._id}`)}
                             title={p.productUrl}
@@ -441,7 +454,7 @@ export default function Products() {
                             {copied === `row-combo-${p._id}` ? 'Copied!' : 'Combo'}
                           </button>
                         )}
-                        {p.websiteUrl && (
+                        {p.isCourse && p.websiteUrl && (
                           <button
                             onClick={() => copyLink(p.websiteUrl, `row-web-${p._id}`)}
                             title={p.websiteUrl}
@@ -450,6 +463,13 @@ export default function Products() {
                             {copied === `row-web-${p._id}` ? 'Copied!' : 'Website'}
                           </button>
                         )}
+                        <button
+                          onClick={() => setPriceHistoryModal({ id: p._id, name: p.name })}
+                          title="View price change history"
+                          className="px-2 py-1 bg-green-50 text-green-600 text-xs rounded hover:bg-green-100 font-medium"
+                        >
+                          💰 History
+                        </button>
                         <button
                           onClick={() => openEdit(p)}
                           className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded hover:bg-gray-200"
@@ -526,14 +546,48 @@ export default function Products() {
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
                 <div className="col-span-2">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Price Change Note (optional)
+                    <span className="text-xs text-gray-400 font-normal ml-2">📝 Why did you change the price?</span>
+                  </label>
+                  <input type="text" value={modal.data.priceNote} onChange={(e) => setField('priceNote', e.target.value)}
+                    placeholder="e.g., Summer sale, demand increase, cost adjustment..."
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500" />
+                  <p className="text-xs text-gray-400 mt-1">This note will be saved in the price history for audit trail.</p>
+                </div>
+                <div className="col-span-2">
                   <label className="block text-xs font-medium text-gray-700 mb-1">Image URL</label>
                   <input value={modal.data.imageUrl} onChange={(e) => setField('imageUrl', e.target.value)}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
 
-                {/* Direct purchase links (optional) — paste manually */}
-                <div className="col-span-2 border border-gray-200 rounded-lg p-4 bg-gray-50/50 space-y-3">
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Direct Purchase Links (optional)</p>
+                {/* Direct purchase links — auto-generated based on product ID */}
+                <div className="col-span-2 border border-gray-200 rounded-lg p-4 bg-gradient-to-br from-blue-50 to-green-50 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">🔗 Direct Purchase Links</p>
+                    {modal.mode === 'edit' && modal.id && (!modal.data.productUrl?.trim() || !modal.data.websiteUrl?.trim()) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setField('productUrl', `https://store.focasedu.com/product/${modal.id}`)
+                          setField('websiteUrl', `https://focasedu.com/course/${modal.id}?pay=1`)
+                        }}
+                        className="px-3 py-1 text-xs rounded-lg border border-green-300 bg-green-100 text-green-700 hover:bg-green-200 font-medium"
+                      >
+                        ✨ Auto-fill
+                      </button>
+                    )}
+                  </div>
+                  {modal.data.isCourse && (
+                    <p className="text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded px-2 py-1">
+                      ✓ Website Link required (Is Course)
+                    </p>
+                  )}
+                  {modal.data.showInComboStore && (
+                    <p className="text-xs text-purple-700 bg-purple-50 border border-purple-200 rounded px-2 py-1">
+                      ✓ Combo Store Link required (Show in Combo Store)
+                    </p>
+                  )}
 
                   {/* Product ID — copy to build the links above */}
                   {modal.mode === 'edit' && modal.id && (
@@ -550,19 +604,24 @@ export default function Products() {
                     </div>
                   )}
 
-                  {/* Product URL 1 — Custom / Combo store */}
+                  {/* Product URL 1 — Combo store */}
                   <div>
                     <label className="block text-xs font-medium text-gray-700 mb-1">
                       <span className="inline-block text-[10px] font-semibold bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded mr-1.5 align-middle">COMBO</span>
                       Combo Store Link
-                      <span className="ml-1.5 text-xs text-gray-400 font-normal">(e.g. store.focasedu.com/product/&lt;id&gt;)</span>
+                      {modal.data.showInComboStore && <span className="ml-1 text-red-500">*</span>}
+                      <span className="ml-1.5 text-xs text-gray-400 font-normal">(auto-filled: store.focasedu.com/product/&lt;id&gt;)</span>
                     </label>
                     <div className="flex gap-2">
                       <input
                         value={modal.data.productUrl}
                         onChange={(e) => setField('productUrl', e.target.value)}
                         placeholder="https://store.focasedu.com/product/<id>"
-                        className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className={`flex-1 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${
+                          modal.data.showInComboStore && !modal.data.productUrl?.trim()
+                            ? 'border-red-400 focus:ring-red-400'
+                            : 'border-gray-300 focus:ring-blue-500'
+                        }`}
                       />
                       <button
                         type="button"
@@ -573,6 +632,9 @@ export default function Products() {
                         {copied === 'combo' ? 'Copied!' : 'Copy'}
                       </button>
                     </div>
+                    {modal.data.showInComboStore && !modal.data.productUrl?.trim() && (
+                      <p className="text-xs text-red-500 mt-1">Combo Store Link is required</p>
+                    )}
                   </div>
 
                   {/* Product URL 2 — Website */}
@@ -580,14 +642,19 @@ export default function Products() {
                     <label className="block text-xs font-medium text-gray-700 mb-1">
                       <span className="inline-block text-[10px] font-semibold bg-sky-100 text-sky-700 px-1.5 py-0.5 rounded mr-1.5 align-middle">WEBSITE</span>
                       Website Link
-                      <span className="ml-1.5 text-xs text-gray-400 font-normal">(e.g. focasedu.com/course/&lt;id&gt;?pay=1)</span>
+                      {modal.data.isCourse && <span className="ml-1 text-red-500">*</span>}
+                      <span className="ml-1.5 text-xs text-gray-400 font-normal">(auto-filled: focasedu.com/course/&lt;id&gt;?pay=1)</span>
                     </label>
                     <div className="flex gap-2">
                       <input
                         value={modal.data.websiteUrl}
                         onChange={(e) => setField('websiteUrl', e.target.value)}
                         placeholder="https://focasedu.com/course/<id>?pay=1"
-                        className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className={`flex-1 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${
+                          modal.data.isCourse && !modal.data.websiteUrl?.trim()
+                            ? 'border-red-400 focus:ring-red-400'
+                            : 'border-gray-300 focus:ring-blue-500'
+                        }`}
                       />
                       <button
                         type="button"
@@ -598,6 +665,9 @@ export default function Products() {
                         {copied === 'website' ? 'Copied!' : 'Copy'}
                       </button>
                     </div>
+                    {modal.data.isCourse && !modal.data.websiteUrl?.trim() && (
+                      <p className="text-xs text-red-500 mt-1">Website Link is required</p>
+                    )}
                   </div>
                 </div>
                 <div>
@@ -861,6 +931,15 @@ export default function Products() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Price History Modal */}
+      {priceHistoryModal && (
+        <PriceHistoryModal
+          productId={priceHistoryModal.id}
+          productName={priceHistoryModal.name}
+          onClose={() => setPriceHistoryModal(null)}
+        />
       )}
     </div>
   )
