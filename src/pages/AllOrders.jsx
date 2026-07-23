@@ -9,6 +9,7 @@ const SOURCE_TABS = [
   { key: 'shopify', label: 'Shopify' },
   { key: 'combo', label: 'Combo' },
   { key: 'custom', label: 'Custom' },
+  { key: 'access', label: 'Access' },
   { key: 'shipto', label: 'Delivery' },
 ]
 
