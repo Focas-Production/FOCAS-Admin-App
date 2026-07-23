@@ -280,6 +280,7 @@ export default function Products() {
   const catalogCount = counts.catalog
   const customCount  = counts.custom
   const bundleCount  = counts.bundle || 0
+  const hiddenCount  = counts.hidden || 0
   const displayed    = products
 
   return (
@@ -295,6 +296,11 @@ export default function Products() {
           {bundleCount > 0 && (
             <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
               {bundleCount} bundle{bundleCount !== 1 ? 's' : ''}
+            </span>
+          )}
+          {hiddenCount > 0 && (
+            <span className="text-xs bg-gray-300 text-gray-700 px-2 py-0.5 rounded-full font-medium">
+              {hiddenCount} hidden
             </span>
           )}
         </div>
@@ -331,7 +337,7 @@ export default function Products() {
 
       {/* Filter tabs */}
       <div className="flex gap-1 border-b border-gray-200">
-        {[['all', 'All Products'], ['catalog', 'Catalog'], ['custom', 'Custom Products'], ['bundle', 'Bundles']].map(([val, label]) => (
+        {[['all', 'All Products'], ['catalog', 'Catalog'], ['custom', 'Custom Products'], ['bundle', 'Bundles'], ['hidden', 'Hidden']].map(([val, label]) => (
           <button
             key={val}
             onClick={() => handleFilterChange(val)}
@@ -350,6 +356,9 @@ export default function Products() {
             )}
             {val === 'bundle' && bundleCount > 0 && (
               <span className="ml-1.5 text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">{bundleCount}</span>
+            )}
+            {val === 'hidden' && hiddenCount > 0 && (
+              <span className="ml-1.5 text-xs bg-gray-300 text-gray-700 px-1.5 py-0.5 rounded-full font-medium">{hiddenCount}</span>
             )}
           </button>
         ))}
@@ -475,6 +484,24 @@ export default function Products() {
                           className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded hover:bg-gray-200"
                         >
                           Edit
+                        </button>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await api.put(`/admin/products/${p._id}`, { isHidden: !p.isHidden })
+                              await load(page, limit, filter, search)
+                            } catch (err) {
+                              alert(err.response?.data?.error || 'Failed to update product')
+                            }
+                          }}
+                          className={`px-2 py-1 text-xs rounded ${
+                            p.isHidden
+                              ? 'bg-yellow-50 text-yellow-600 hover:bg-yellow-100'
+                              : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
+                          }`}
+                          title={p.isHidden ? 'Unhide product' : 'Hide product'}
+                        >
+                          {p.isHidden ? '👁️ Show' : '👁️‍🗨️ Hide'}
                         </button>
                         <button
                           onClick={() => setDeleteConfirm(p)}
