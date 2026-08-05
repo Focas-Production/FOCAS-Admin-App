@@ -10,7 +10,7 @@ const empty = {
   productUrl: '', websiteUrl: '',
   shopifyProductId: '', shopifyPrice: '', comboPrice: '',
   category: '', subCategory: '', level: '',
-  weight: '', shipToHome: false, isCourse: false,
+  weight: '', shipToHome: false, isCourse: false, hasSchedule: false,
   courses: '', features: '',
   stock: '',
   showInComboStore: false,
@@ -132,6 +132,7 @@ export default function Products() {
         weight: product.weight ?? '',
         shipToHome: product.shipToHome ?? false,
         isCourse: product.isCourse ?? false,
+        hasSchedule: product.hasSchedule ?? false,
         courses: (product.grants?.courses || []).join(', '),
         features: (product.grants?.features || []).join(', '),
         stock: product.stock ?? '',
@@ -225,6 +226,7 @@ export default function Products() {
       weight: d.weight !== '' ? Number(d.weight) : undefined,
       shipToHome: d.shipToHome,
       isCourse: d.isCourse,
+      hasSchedule: d.hasSchedule,
       grants: {
         courses: d.courses ? d.courses.split(',').map((s) => s.trim()).filter(Boolean) : [],
         features: d.features ? d.features.split(',').map((s) => s.trim()).filter(Boolean) : [],
@@ -748,6 +750,16 @@ export default function Products() {
                   <input type="checkbox" id="shipToHome" checked={modal.data.shipToHome}
                     onChange={(e) => setField('shipToHome', e.target.checked)} className="rounded" />
                   <label htmlFor="shipToHome" className="text-sm text-gray-700">ShipToHome (physical delivery)</label>
+                </div>
+                <div className="col-span-2 flex items-center gap-2 pb-2">
+                  <input type="checkbox" id="hasSchedule" checked={modal.data.hasSchedule}
+                    onChange={(e) => setField('hasSchedule', e.target.checked)} className="rounded accent-emerald-600" />
+                  <label htmlFor="hasSchedule" className="text-sm text-gray-700">
+                    Needs Class Scheduling
+                    <span className="ml-1.5 text-xs text-emerald-700 font-medium bg-emerald-50 px-2 py-0.5 rounded-full">
+                      orders enter Scheduled/Unscheduled queue
+                    </span>
+                  </label>
                 </div>
                 <div className="col-span-2 flex items-center gap-2 pb-2">
                   <input type="checkbox" id="showInComboStore" checked={modal.data.showInComboStore}

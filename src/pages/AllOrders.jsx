@@ -13,7 +13,7 @@ const SOURCE_TABS = [
   { key: 'shipto', label: 'Delivery' },
 ]
 
-const emptyFilters = { orderId: '', phone: '', dateFrom: '', dateTo: '', fulfillmentStatus: '', awbStatus: '' }
+const emptyFilters = { orderId: '', phone: '', dateFrom: '', dateTo: '', fulfillmentStatus: '', awbStatus: '', scheduled: '' }
 
 function fmt(date) {
   if (!date) return '—'
@@ -149,6 +149,11 @@ function OrderDrawer({ orderId, onClose }) {
               <StatusBadge value={order.source} />
               <StatusBadge value={order.status} />
               <StatusBadge value={order.fulfillmentStatus} />
+              {typeof order.scheduled === 'boolean' && (
+                <span className={`text-xs font-medium px-2 py-1 rounded ${order.scheduled ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                  {order.scheduled ? '✓ Class Scheduled' : 'Class Not Scheduled'}
+                </span>
+              )}
             </div>
 
             {/* Customer */}
@@ -794,6 +799,7 @@ export default function AllOrders() {
       if (f.dateTo)              params.set('dateTo', f.dateTo)
       if (f.fulfillmentStatus)   params.set('fulfillmentStatus', f.fulfillmentStatus)
       if (f.awbStatus)           params.set('awbStatus', f.awbStatus)
+      if (f.scheduled)           params.set('scheduled', f.scheduled)
       const { data } = await api.get(`/admin/purchases?${params}`)
       setOrders(data.purchases || [])
       setSelectedIds([])   // selection is per page/tab — reset on any reload
@@ -853,6 +859,21 @@ export default function AllOrders() {
     await load(pagination.page, filters, sourceTab, limit)
   }
 
+  // Mark whether the ops team has scheduled the class for this order.
+  // Only shown for orders that carry the `scheduled` key (created after the
+  // feature shipped) — older orders display "—".
+  async function handleToggleScheduled(id, value) {
+    setActionLoading((p) => ({ ...p, [id]: 'sched' }))
+    try {
+      await api.patch(`/admin/purchases/${id}/scheduled`, { scheduled: value })
+      setOrders((prev) => prev.map((o) => (o._id === id ? { ...o, scheduled: value } : o)))
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to update scheduled status')
+    } finally {
+      setActionLoading((p) => { const n = { ...p }; delete n[id]; return n })
+    }
+  }
+
   async function handleGetRate(id) {
     setActionLoading((p) => ({ ...p, [id]: 'rate' }))
     try {
@@ -892,7 +913,7 @@ export default function AllOrders() {
     }
   }
 
-  const hasFilter = filters.orderId || filters.phone || filters.dateFrom || filters.dateTo || filters.fulfillmentStatus || filters.awbStatus
+  const hasFilter = filters.orderId || filters.phone || filters.dateFrom || filters.dateTo || filters.fulfillmentStatus || filters.awbStatus || filters.scheduled
 
   async function handleExport() {
     setExporting(true)
@@ -906,6 +927,7 @@ export default function AllOrders() {
       if (filters.dateTo)            params.set('dateTo', filters.dateTo)
       if (filters.fulfillmentStatus) params.set('fulfillmentStatus', filters.fulfillmentStatus)
       if (filters.awbStatus)         params.set('awbStatus', filters.awbStatus)
+      if (filters.scheduled)         params.set('scheduled', filters.scheduled)
 
       const { data } = await api.get(`/admin/purchases?${params}`)
       const rows = data.purchases || []
@@ -917,7 +939,7 @@ export default function AllOrders() {
         'Date', 'Order ID',
         'Customer Name', 'Customer Phone', 'Customer Email',
         'Source', 'Items', 'Total Amount',
-        'Payment Status', 'Fulfillment Status', 'Admin Notes',
+        'Payment Status', 'Fulfillment Status', 'Class Scheduled', 'Admin Notes',
       ]
       if (hasDelivery) {
         headers.push('AWB', 'Tracking Status', 'Tracking Location',
@@ -946,6 +968,7 @@ export default function AllOrders() {
           total,
           o.status || '',
           o.fulfillmentStatus || '',
+          typeof o.scheduled === 'boolean' ? (o.scheduled ? 'Yes' : 'No') : '',
           o.notes || '',
         ]
         if (hasDelivery) {
@@ -980,7 +1003,7 @@ export default function AllOrders() {
     }
   }
 
-  const COLS = ['Order ID', 'Customer', 'Source', 'Items', 'Amount', 'Payment', 'Fulfillment', 'Delivery Status', 'AWB', 'Notes', 'Date', 'Actions']
+  const COLS = ['Order ID', 'Customer', 'Source', 'Items', 'Amount', 'Payment', 'Fulfillment', 'Class Scheduled', 'Delivery Status', 'AWB', 'Notes', 'Date', 'Actions']
 
   // ── Bulk selection (Delivery tab only) ──────────────────────────────────────
   const showSelect = sourceTab === 'shipto'
@@ -1115,6 +1138,18 @@ export default function AllOrders() {
             title="To date"
             className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
+
+          {/* Class scheduling filter — legacy orders (before the feature) match neither option */}
+          <select
+            value={filters.scheduled}
+            onChange={(e) => handleFilterChange('scheduled', e.target.value)}
+            title="Class Scheduling"
+            className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">All Scheduling</option>
+            <option value="true">Scheduled</option>
+            <option value="false">Unscheduled</option>
+          </select>
 
           {/* Delivery status filters — only on Delivery tab */}
           {sourceTab === 'shipto' && (
@@ -1284,6 +1319,29 @@ export default function AllOrders() {
                     <td className="px-4 py-3 text-gray-700 font-medium text-xs">{fmtAmount(o.items)}</td>
                     <td className="px-4 py-3"><StatusBadge value={o.status} /></td>
                     <td className="px-4 py-3"><StatusBadge value={o.fulfillmentStatus} /></td>
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      {typeof o.scheduled !== 'boolean' ? (
+                        <span className="text-xs text-gray-400" title="No class to schedule — order has no 'Needs Class Scheduling' product (or predates the feature)">—</span>
+                      ) : o.scheduled ? (
+                        <button
+                          onClick={() => { if (confirm('Mark this order back to Unscheduled?')) handleToggleScheduled(o._id, false) }}
+                          disabled={actionLoading[o._id] === 'sched'}
+                          title="Class scheduled — click to unmark"
+                          className="px-2 py-1 bg-emerald-100 text-emerald-700 text-xs font-medium rounded hover:bg-emerald-200 disabled:opacity-50 whitespace-nowrap"
+                        >
+                          {actionLoading[o._id] === 'sched' ? '...' : '✓ Scheduled'}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleToggleScheduled(o._id, true)}
+                          disabled={actionLoading[o._id] === 'sched'}
+                          title="Mark class as scheduled"
+                          className="px-2 py-1 bg-amber-100 text-amber-700 text-xs font-medium rounded hover:bg-amber-200 disabled:opacity-50 whitespace-nowrap"
+                        >
+                          {actionLoading[o._id] === 'sched' ? '...' : 'Mark Scheduled'}
+                        </button>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <StatusBadge value={o.shipment?.trackingStatus || null} />
                     </td>
