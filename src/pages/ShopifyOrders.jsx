@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import api from '../services/api'
+import api, { API_BASE } from '../services/api'
 import StatusBadge from '../components/StatusBadge'
 import Pagination from '../components/Pagination'
 import SearchFilters from '../components/SearchFilters'
@@ -98,7 +98,7 @@ export default function ShopifyOrders() {
     setActionLoading((p) => ({ ...p, [id]: 'label' }))
     try {
       const token = localStorage.getItem('admin_token')
-      const res = await fetch(`/api/delivery/label/${awb}`, {
+      const res = await fetch(`${API_BASE}/delivery/label/${awb}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) {

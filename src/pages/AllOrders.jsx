@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import api from '../services/api'
+import api, { API_BASE } from '../services/api'
 import StatusBadge from '../components/StatusBadge'
 import Pagination from '../components/Pagination'
 
@@ -891,7 +891,7 @@ export default function AllOrders() {
     setActionLoading((p) => ({ ...p, [id]: 'label' }))
     try {
       const token = localStorage.getItem('admin_token')
-      const res = await fetch(`/api/delivery/label/${awb}`, {
+      const res = await fetch(`${API_BASE}/delivery/label/${awb}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) {
@@ -1069,7 +1069,7 @@ export default function AllOrders() {
     setBulkLoading(true)
     try {
       const token = localStorage.getItem('admin_token')
-      const res = await fetch(`/api/delivery/labels/${awbs.join(',')}`, { headers: { Authorization: `Bearer ${token}` } })
+      const res = await fetch(`${API_BASE}/delivery/labels/${awbs.join(',')}`, { headers: { Authorization: `Bearer ${token}` } })
       if (!res.ok) {
         const e = await res.json().catch(() => ({}))
         alert(e.error || 'Failed to download labels')
