@@ -138,17 +138,21 @@ export default function Sales() {
         </button>
       </div>
 
-      {/* Summary Cards */}
+      {/* Summary Cards — revenue is net of refunds; gross and refunds shown alongside */}
       {loading ? (
-        <div className="grid grid-cols-3 gap-4">
-          {[...Array(3)].map((_, i) => (
+        <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+          {[...Array(4)].map((_, i) => (
             <div key={i} className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 animate-pulse h-24" />
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <SummaryCard label="Total Revenue" value={fmt(summary?.totalRevenue)} color="text-emerald-600"
-            sub={filters.dateFrom && filters.dateTo ? `${filters.dateFrom} → ${filters.dateTo}` : 'All time'} />
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+          <SummaryCard label="Net Revenue" value={fmt(summary?.totalRevenue)} color="text-emerald-600"
+            sub={summary?.totalRefunds > 0
+              ? `${fmt(summary.grossRevenue)} gross − ${fmt(summary.totalRefunds)} refunded`
+              : (filters.dateFrom && filters.dateTo ? `${filters.dateFrom} → ${filters.dateTo}` : 'All time')} />
+          <SummaryCard label="Refunds" value={summary?.totalRefunds > 0 ? `−${fmt(summary.totalRefunds)}` : fmt(0)} color="text-red-500"
+            sub="Counted against the order's own date" />
           <SummaryCard label="Total Orders"  value={(summary?.totalOrders || 0).toLocaleString()} color="text-blue-600" />
           <SummaryCard label="Items Sold"    value={(summary?.totalItems  || 0).toLocaleString()} color="text-purple-600" />
         </div>
@@ -167,7 +171,8 @@ export default function Sales() {
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
                   <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-5 py-3">Period</th>
-                  <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Revenue</th>
+                  <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Net Revenue</th>
+                  <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Refunds</th>
                   <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Orders</th>
                   <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Items</th>
                   <th className="px-4 py-3 w-32"></th>
@@ -177,14 +182,14 @@ export default function Sales() {
                 {loading ? (
                   [...Array(8)].map((_, i) => (
                     <tr key={i}>
-                      {[...Array(5)].map((_, j) => (
+                      {[...Array(6)].map((_, j) => (
                         <td key={j} className="px-4 py-3"><div className="h-4 bg-gray-100 rounded animate-pulse" /></td>
                       ))}
                     </tr>
                   ))
                 ) : timeline.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-5 py-10 text-center text-gray-400">No sales in this period</td>
+                    <td colSpan={6} className="px-5 py-10 text-center text-gray-400">No sales in this period</td>
                   </tr>
                 ) : (
                   [...timeline].reverse().map((row, i) => (
@@ -193,6 +198,11 @@ export default function Sales() {
                         {periodLabel(row.period, filters.groupBy)}
                       </td>
                       <td className="px-4 py-3 font-semibold text-emerald-700">{fmt(row.totalRevenue)}</td>
+                      <td className="px-4 py-3">
+                        {row.totalRefunds > 0
+                          ? <span className="text-red-500 font-medium" title={`${fmt(row.grossRevenue)} gross`}>−{fmt(row.totalRefunds)}</span>
+                          : <span className="text-gray-300">—</span>}
+                      </td>
                       <td className="px-4 py-3 text-gray-600">{row.totalOrders}</td>
                       <td className="px-4 py-3 text-gray-600">{row.totalItems}</td>
                       <td className="px-4 py-3">
@@ -213,7 +223,7 @@ export default function Sales() {
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
           <div className="px-5 py-4 border-b border-gray-100">
             <h3 className="font-semibold text-gray-800">Products</h3>
-            <p className="text-xs text-gray-400 mt-0.5">by revenue</p>
+            <p className="text-xs text-gray-400 mt-0.5">by net revenue</p>
           </div>
           <div className="divide-y divide-gray-50 flex-1">
             {loading ? (
@@ -240,6 +250,7 @@ export default function Sales() {
                   </div>
                   <div className="text-right flex-shrink-0">
                     <p className="text-sm font-semibold text-emerald-700">{fmt(p.totalRevenue)}</p>
+                    {p.totalRefunds > 0 && <p className="text-xs text-red-500">−{fmt(p.totalRefunds)} refunded</p>}
                     {p.category && <p className="text-xs text-gray-400">{p.category}</p>}
                   </div>
                 </div>

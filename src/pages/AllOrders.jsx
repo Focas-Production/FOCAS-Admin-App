@@ -25,6 +25,15 @@ function fmtAmount(items) {
   return total > 0 ? `₹${total.toLocaleString('en-IN')}` : '—'
 }
 
+const rupees = (n) => `₹${(n || 0).toLocaleString('en-IN')}`
+
+// Mirrors the server rule: total refunds on an order can never exceed what was paid.
+function refundableOf(order) {
+  const gross    = (order?.items   || []).reduce((s, i) => s + (Number(i.amount) || 0), 0)
+  const refunded = (order?.refunds || []).reduce((s, r) => s + (Number(r.amount) || 0), 0)
+  return { gross, refunded, refundable: Math.max(0, gross - refunded) }
+}
+
 function displayPincode(address = {}) {
   return address.pincode || address.zip || address.postalCode || address.postal_code || ''
 }
@@ -103,6 +112,8 @@ function OrderDrawer({ orderId, onClose }) {
   async function submitRefund() {
     setRefundError('')
     if (!refundAmt || Number(refundAmt) <= 0) { setRefundError('Amount is required'); return }
+    const { refundable } = refundableOf(order)
+    if (Number(refundAmt) > refundable) { setRefundError(`Only ${rupees(refundable)} can still be refunded on this order`); return }
     if (!refundNotes.trim())  { setRefundError('Notes is required'); return }
     if (!refundImage.trim())  { setRefundError('Proof image URL is required'); return }
     setRefundSaving(true)
@@ -314,13 +325,16 @@ function OrderDrawer({ orderId, onClose }) {
                 >
                   {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save Notes'}
                 </button>
-                {!showRefund && (
+                {!showRefund && refundableOf(order).refundable > 0 && (
                   <button
                     onClick={() => setShowRefund(true)}
                     className="px-4 py-1.5 rounded-lg border border-red-300 text-red-600 text-sm font-medium hover:bg-red-50 transition-colors"
                   >
                     Initiate Refund
                   </button>
+                )}
+                {!showRefund && refundableOf(order).gross > 0 && refundableOf(order).refundable === 0 && (
+                  <span className="text-xs text-gray-400">Fully refunded</span>
                 )}
               </div>
 
@@ -333,12 +347,16 @@ function OrderDrawer({ orderId, onClose }) {
                       Amount (₹) <span className="text-red-500">*</span>
                     </label>
                     <input
-                      type="number" min="1"
+                      type="number" min="1" max={refundableOf(order).refundable}
                       value={refundAmt}
                       onChange={(e) => setRefundAmt(e.target.value)}
                       placeholder="e.g. 500"
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
                     />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Refundable: {rupees(refundableOf(order).refundable)} of {rupees(refundableOf(order).gross)} paid
+                      {refundableOf(order).refunded > 0 && ` (${rupees(refundableOf(order).refunded)} already refunded)`}
+                    </p>
                   </div>
 
                   <div>
