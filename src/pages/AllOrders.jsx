@@ -80,7 +80,9 @@ function OrderDrawer({ orderId, onClose }) {
   const [showRefund, setShowRefund]     = useState(false)
   const [refundAmt, setRefundAmt]       = useState('')
   const [refundNotes, setRefundNotes]   = useState('')
-  const [refundImage, setRefundImage]   = useState('')
+  // The proof screenshot: { name, previewUrl, key, status: 'uploading'|'done'|'error', error }
+  const [refundProof, setRefundProof]   = useState(null)
+  const refundFileRef = useRef(null)
   const [refundSaving, setRefundSaving] = useState(false)
   const [refundError, setRefundError]   = useState('')
 
@@ -109,25 +111,67 @@ function OrderDrawer({ orderId, onClose }) {
     }
   }
 
+  // Upload the chosen screenshot straight to R2 (presigned PUT, same path as
+  // manual-payment proofs) under refund-proofs/. The refund then records the
+  // object key; the server checks the object exists and is an image.
+  async function handleRefundFile(file) {
+    if (!file) return
+    setRefundError('')
+    if (!file.type.startsWith('image/')) { setRefundError('Only image files (JPG/PNG/WEBP) are allowed'); return }
+    if (file.size > 10 * 1024 * 1024)    { setRefundError('Image must be under 10MB'); return }
+    if (refundProof?.previewUrl) URL.revokeObjectURL(refundProof.previewUrl)
+    const entry = { name: file.name, previewUrl: URL.createObjectURL(file), key: null, status: 'uploading', error: '' }
+    setRefundProof(entry)
+    // Only touch state if this is still the file being shown (the admin may
+    // have picked another one while this upload was in flight).
+    const patch = (fields) => setRefundProof((p) => (p?.previewUrl === entry.previewUrl ? { ...p, ...fields } : p))
+    try {
+      const { data } = await api.post('/admin/uploads/presign', {
+        prefix: 'refund-proofs',
+        files: [{ name: file.name, contentType: file.type, size: file.size }],
+      })
+      const u = data.uploads?.[0]
+      if (!u?.uploadUrl) throw new Error('presign failed')
+      const put = await fetch(u.uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } })
+      if (!put.ok) throw new Error('upload failed')
+      patch({ key: u.key, status: 'done' })
+    } catch (err) {
+      patch({ status: 'error', error: err.response?.data?.error || 'Upload failed — try again' })
+    }
+  }
+
+  function clearRefundProof() {
+    if (refundProof?.previewUrl) URL.revokeObjectURL(refundProof.previewUrl)
+    setRefundProof(null)
+    if (refundFileRef.current) refundFileRef.current.value = ''
+  }
+
+  function resetRefundForm() {
+    clearRefundProof()
+    setShowRefund(false)
+    setRefundAmt(''); setRefundNotes(''); setRefundError('')
+  }
+
   async function submitRefund() {
     setRefundError('')
     if (!refundAmt || Number(refundAmt) <= 0) { setRefundError('Amount is required'); return }
     const { refundable } = refundableOf(order)
     if (Number(refundAmt) > refundable) { setRefundError(`Only ${rupees(refundable)} can still be refunded on this order`); return }
     if (!refundNotes.trim())  { setRefundError('Notes is required'); return }
-    if (!refundImage.trim())  { setRefundError('Proof image URL is required'); return }
+    if (refundProof?.status === 'uploading') { setRefundError('Please wait for the proof image to finish uploading'); return }
+    if (refundProof?.status !== 'done' || !refundProof.key) { setRefundError('Upload a proof image of the refund'); return }
     setRefundSaving(true)
     try {
       await api.post(`/admin/purchases/${orderId}/refund`, {
-        amount:   Number(refundAmt),
-        notes:    refundNotes.trim(),
-        imageUrl: refundImage.trim(),
+        amount:    Number(refundAmt),
+        notes:     refundNotes.trim(),
+        proofKey:  refundProof.key,
+        proofName: refundProof.name,
       })
       // Refresh to show new refund record
       const { data } = await api.get(`/admin/purchases/${orderId}`)
       setOrder(data.purchase)
-      setShowRefund(false)
-      setRefundAmt(''); setRefundNotes(''); setRefundImage('')
+      resetRefundForm()
     } catch (err) {
       setRefundError(err.response?.data?.error || 'Failed to submit refund')
     } finally {
@@ -374,15 +418,53 @@ function OrderDrawer({ orderId, onClose }) {
 
                   <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">
-                      Proof Image URL <span className="text-red-500">*</span>
+                      Proof Image <span className="text-red-500">*</span>
                     </label>
                     <input
-                      type="url"
-                      value={refundImage}
-                      onChange={(e) => setRefundImage(e.target.value)}
-                      placeholder="https://…"
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
+                      ref={refundFileRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; handleRefundFile(f) }}
                     />
+                    {refundProof ? (
+                      <div className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white px-3 py-2">
+                        <div className="relative w-14 h-14 rounded-md overflow-hidden border border-gray-200 bg-gray-50 flex-shrink-0">
+                          <img src={refundProof.previewUrl} alt={refundProof.name} className="w-full h-full object-cover" />
+                          {refundProof.status === 'uploading' && (
+                            <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                              <span className="text-[10px] text-white">Uploading…</span>
+                            </div>
+                          )}
+                          {refundProof.status === 'done' && (
+                            <span className="absolute bottom-0.5 right-0.5 bg-green-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px]">✓</span>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs text-gray-700 truncate">{refundProof.name}</p>
+                          <p className={`text-[11px] ${refundProof.status === 'error' ? 'text-red-600' : 'text-gray-400'}`}>
+                            {refundProof.status === 'uploading' ? 'Uploading…' : refundProof.status === 'error' ? refundProof.error : 'Uploaded'}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => { clearRefundProof(); if (refundProof.status === 'error') refundFileRef.current?.click() }}
+                          disabled={refundProof.status === 'uploading' || refundSaving}
+                          className="text-xs text-gray-500 hover:text-red-600 disabled:opacity-40 flex-shrink-0"
+                        >
+                          {refundProof.status === 'error' ? 'Choose another' : 'Remove'}
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => refundFileRef.current?.click()}
+                        className="w-full border-2 border-dashed border-gray-300 rounded-lg py-3 text-sm text-gray-500 hover:border-red-400 hover:text-red-600 transition-colors"
+                      >
+                        + Upload proof image
+                      </button>
+                    )}
+                    <p className="text-[11px] text-gray-400 mt-1">Screenshot of the refund transfer. JPG/PNG/WEBP, up to 10MB.</p>
                   </div>
 
                   {refundError && <p className="text-xs text-red-600">{refundError}</p>}
@@ -390,7 +472,7 @@ function OrderDrawer({ orderId, onClose }) {
                   <div className="flex gap-2 pt-1">
                     <button
                       type="button"
-                      onClick={() => { setShowRefund(false); setRefundAmt(''); setRefundNotes(''); setRefundImage(''); setRefundError('') }}
+                      onClick={resetRefundForm}
                       className="flex-1 py-2 rounded-lg border border-gray-300 text-gray-600 text-sm hover:bg-gray-50"
                     >
                       Cancel
@@ -422,12 +504,18 @@ function OrderDrawer({ orderId, onClose }) {
                         </span>
                       </div>
                       {r.notes && <p className="text-gray-600 text-xs">{r.notes}</p>}
-                      {r.imageUrl && (
+                      {r.proof?.key ? (
+                        // Uploaded to R2 — private object, thumbnail via signed URL
+                        <div className="w-20 pt-1">
+                          <ProofImage proofKey={r.proof.key} name={r.proof.name || 'Refund proof'} />
+                        </div>
+                      ) : r.imageUrl ? (
+                        // Legacy refunds recorded before uploads existed
                         <a href={r.imageUrl} target="_blank" rel="noopener noreferrer"
                           className="text-xs text-blue-600 hover:underline break-all">
                           View Proof
                         </a>
-                      )}
+                      ) : null}
                     </div>
                   ))}
                 </div>
