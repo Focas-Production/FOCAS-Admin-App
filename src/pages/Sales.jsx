@@ -115,6 +115,8 @@ export default function Sales() {
             <option value="shopify">Shopify</option>
             <option value="combo">Combo</option>
             <option value="custom">Custom (Razorpay)</option>
+            <option value="market">Market</option>
+            <option value="access">Access (granted)</option>
           </select>
         </div>
         <div>

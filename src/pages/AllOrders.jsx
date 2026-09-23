@@ -10,6 +10,9 @@ const SOURCE_TABS = [
   { key: 'combo', label: 'Combo' },
   { key: 'custom', label: 'Custom' },
   { key: 'access', label: 'Access' },
+  // Orders pushed in from the qb.focasedu.com storefront. Named after the site,
+  // not the product, because that store sells several products.
+  { key: 'market', label: 'Market' },
   { key: 'shipto', label: 'Delivery' },
 ]
 

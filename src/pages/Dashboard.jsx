@@ -28,7 +28,7 @@ export default function Dashboard() {
         const today = ymd(now)
         const monthStart = ymd(new Date(now.getFullYear(), now.getMonth(), 1))
 
-        const [purchasesRes, usersRes, productsRes, shipmentsRes, summaryRes, stockRes, webRes, shopRes, customRes, comboRes, paymentRes] = await Promise.all([
+        const [purchasesRes, usersRes, productsRes, shipmentsRes, summaryRes, stockRes, webRes, shopRes, customRes, comboRes, qbRes, paymentRes] = await Promise.all([
           api.get('/admin/purchases?page=1&limit=1'),
           api.get('/admin/users?page=1&limit=1'),
           api.get('/admin/products?page=1&limit=1'),
@@ -39,6 +39,7 @@ export default function Dashboard() {
           api.get('/admin/purchases?source=shopify&page=1&limit=1'),
           api.get('/admin/purchases?source=custom&page=1&limit=1'),
           api.get('/admin/purchases?source=combo&page=1&limit=1'),
+          api.get('/admin/purchases?source=market&page=1&limit=1'),
           api.get('/payment?page=1&limit=1'),
         ])
 
@@ -51,6 +52,7 @@ export default function Dashboard() {
           shopify:      shopRes.data.pagination?.total     || 0,
           custom:       customRes.data.pagination?.total   || 0,
           combo:        comboRes.data.pagination?.total    || 0,
+          market:       qbRes.data.pagination?.total     || 0,
           paymentLinks: paymentRes.data.pagination?.total  || 0,
           shipments:    shipmentsRes.data.pagination?.total || 0,
           users:        usersRes.data.pagination?.total    || 0,
@@ -96,6 +98,7 @@ export default function Dashboard() {
         <StatCard label="Shopify Orders"      value={stats?.shopify}      to="/orders"   color="text-purple-600" />
         <StatCard label="Custom Orders"       value={stats?.custom}       to="/orders"   color="text-emerald-600" />
         <StatCard label="Combo Orders"        value={stats?.combo}        to="/orders"   color="text-orange-500" />
+        <StatCard label="Market Orders"       value={stats?.market}       to="/orders"   color="text-amber-600" />
         <StatCard label="Razorpay Links"      value={stats?.paymentLinks} to="/payments" color="text-indigo-600" />
         <StatCard label="ShipToHome Orders"   value={stats?.shipments}    to="/orders"   color="text-sky-600"
           sub="With delivery tracking" />
@@ -178,6 +181,7 @@ export default function Dashboard() {
               { label: 'Shopify',        value: stats?.shopify,      color: 'bg-purple-500' },
               { label: 'Custom',         value: stats?.custom,       color: 'bg-emerald-500' },
               { label: 'Combo',          value: stats?.combo,        color: 'bg-orange-500' },
+              { label: 'Market',       value: stats?.market,      color: 'bg-amber-500' },
               { label: 'Razorpay Links', value: stats?.paymentLinks, color: 'bg-indigo-500' },
             ].map((row) => ({...row, total: (stats?.total || 0) + (stats?.paymentLinks || 0)})).map((row) => (
               <div key={row.label}>

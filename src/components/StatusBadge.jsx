@@ -12,6 +12,7 @@ const colorMap = {
   website: 'bg-blue-100 text-blue-800',
   shopify: 'bg-purple-100 text-purple-800',
   combo: 'bg-teal-100 text-teal-800',
+  market: 'bg-amber-100 text-amber-800',
   // Tracking
   Delivered: 'bg-green-100 text-green-800',
   Manifested: 'bg-blue-100 text-blue-800',
@@ -23,12 +24,17 @@ const colorMap = {
   Cancelled: 'bg-red-100 text-red-800',
 }
 
+// Stored values that don't read well raw in a badge.
+const labelMap = {
+  market: 'Market',
+}
+
 export default function StatusBadge({ value }) {
   if (!value) return <span className="text-gray-400 text-xs">—</span>
   const cls = colorMap[value] || 'bg-gray-100 text-gray-700'
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${cls}`}>
-      {value}
+      {labelMap[value] || value}
     </span>
   )
 }
