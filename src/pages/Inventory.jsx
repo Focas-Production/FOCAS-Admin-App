@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import api from '../services/api'
 
 // ─── Settings Modal ────────────────────────────────────────────────────────────
@@ -373,6 +373,86 @@ function InventoryLogs() {
   )
 }
 
+// ─── Product Picker ────────────────────────────────────────────────────────────
+// A native <select> can't lay text out in columns, so this is a small custom
+// dropdown: name + stock on the left, web price on the right, with a search box.
+
+function formatPrice(price) {
+  return price != null ? `₹${Number(price).toLocaleString('en-IN')}` : '—'
+}
+
+function stockLabel(p) {
+  return p.currentStock != null ? `${p.currentStock} in stock` : 'not tracked'
+}
+
+function ProductPicker({ products, value, onChange }) {
+  const [open, setOpen]     = useState(false)
+  const [search, setSearch] = useState('')
+  const boxRef              = useRef(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onDown(e) {
+      if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  const selected = products.find((p) => p._id === value)
+  const q = search.trim().toLowerCase()
+  const shown = q ? products.filter((p) => (p.name || '').toLowerCase().includes(q)) : products
+
+  function pick(id) {
+    onChange(id)
+    setOpen(false)
+    setSearch('')
+  }
+
+  return (
+    <div ref={boxRef} className="relative">
+      <button type="button" onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between gap-3 border border-gray-300 rounded-lg px-3 py-2 text-sm text-left focus:outline-none focus:ring-2 focus:ring-blue-500">
+        {selected ? (
+          <>
+            <span className="truncate text-gray-900">
+              {selected.name} <span className="text-gray-400">({stockLabel(selected)})</span>
+            </span>
+            <span className="shrink-0 font-medium text-gray-700">{formatPrice(selected.price)}</span>
+          </>
+        ) : (
+          <span className="text-gray-500">Select product…</span>
+        )}
+      </button>
+
+      {open && (
+        <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg">
+          <div className="p-2 border-b border-gray-100">
+            <input autoFocus value={search} onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search product…"
+              className="w-full border border-gray-300 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <ul className="max-h-72 overflow-y-auto py-1">
+            {shown.length === 0 && <li className="px-3 py-2 text-sm text-gray-400">No products found</li>}
+            {shown.map((p) => (
+              <li key={p._id}>
+                <button type="button" onClick={() => pick(p._id)}
+                  className={`w-full flex items-center justify-between gap-3 px-3 py-2 text-sm text-left hover:bg-blue-50
+                    ${p._id === value ? 'bg-blue-50' : ''}`}>
+                  <span className="truncate text-gray-900">
+                    {p.name} <span className="text-gray-400">({stockLabel(p)})</span>
+                  </span>
+                  <span className="shrink-0 font-medium text-gray-700">{formatPrice(p.price)}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Manual Adjust Modal ───────────────────────────────────────────────────────
 
 function AdjustModal({ product, allProducts, onClose, onDone }) {
@@ -388,6 +468,10 @@ function AdjustModal({ product, allProducts, onClose, onDone }) {
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
+    if (!form.productId) {
+      setError('Select a product')
+      return
+    }
     if (!form.quantity || Number(form.quantity) === 0) {
       setError('Quantity must be non-zero')
       return
@@ -420,15 +504,11 @@ function AdjustModal({ product, allProducts, onClose, onDone }) {
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Product</label>
-            <select value={form.productId} onChange={(e) => setForm((f) => ({ ...f, productId: e.target.value }))}
-              className={inputCls} required>
-              <option value="">Select product…</option>
-              {allProducts.map((p) => (
-                <option key={p._id} value={p._id}>
-                  {p.name} {p.currentStock != null ? `(${p.currentStock} in stock)` : '(not tracked)'}
-                </option>
-              ))}
-            </select>
+            <ProductPicker
+              products={allProducts}
+              value={form.productId}
+              onChange={(id) => setForm((f) => ({ ...f, productId: id }))}
+            />
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Type</label>
@@ -499,10 +579,15 @@ export default function Inventory() {
     }).catch(console.error)
   }, [])
 
-  // Load all products for the adjust modal dropdown
+  // Load every product (except bundles) for the adjust modal dropdown — not just tracked ones,
+  // otherwise a product can never be restocked once its stock is cleared.
   useEffect(() => {
-    api.get('/admin/inventory/stock').then(({ data }) => {
-      setAllProducts(data.overview || [])
+    api.get('/admin/products?limit=10000').then(({ data }) => {
+      const products = (data.products || [])
+        .filter((p) => !p.isBundle)   // a bundle's stock lives on the products inside it
+        .map((p) => ({ _id: p._id, name: p.name, price: p.price ?? null, currentStock: p.stock ?? null }))
+        .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+      setAllProducts(products)
     }).catch(console.error)
   }, [stockRefresh])
 
