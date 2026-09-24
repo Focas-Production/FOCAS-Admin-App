@@ -28,6 +28,8 @@ function dueInWords(dueDay) {
   return diff === -1 ? '1 day late' : `${-diff} days late`
 }
 
+const reminderSwitches = (cfg) => ({ due: !!cfg?.enabled, overdue: !!cfg?.overdue?.enabled })
+
 const EMPTY_FILTERS = { q: '', status: '', dateField: 'due_date', month: '', from: '', to: '' }
 const filterInput = 'border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
 
@@ -90,7 +92,7 @@ export default function Accounts() {
   const [showAdd, setShowAdd]         = useState(false)
   const [editRow, setEditRow]         = useState(null) // manual receivable being edited
   const [showReminders, setShowReminders] = useState(false)
-  const [reminderOn, setReminderOn]   = useState(null) // WhatsApp EMI reminders switch (null = not loaded)
+  const [reminderOn, setReminderOn]   = useState(null) // { due, overdue } WhatsApp reminder switches (null = not loaded)
   const [deletingId, setDeletingId]   = useState(null)
 
   const loadSummary = useCallback(async () => {
@@ -174,7 +176,7 @@ export default function Accounts() {
   useEffect(() => { loadReceivables() }, [loadReceivables])
   useEffect(() => {
     api.get('/accounts/emi-reminders')
-      .then((res) => setReminderOn(!!res.data.config?.enabled))
+      .then((res) => setReminderOn(reminderSwitches(res.data.config)))
       .catch((err) => console.error(err))
   }, [])
   useEffect(() => { loadEntries() }, [loadEntries])
@@ -223,14 +225,14 @@ export default function Accounts() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => setShowReminders(true)} title="WhatsApp EMI due reminders to students"
+            <button onClick={() => setShowReminders(true)} title="WhatsApp EMI reminders to students — before the due date and daily once overdue"
               className="inline-flex items-center gap-2 border border-gray-300 hover:bg-gray-50 text-gray-700 text-sm font-semibold px-3.5 py-2 rounded-lg transition-colors">
               WhatsApp reminders
-              {reminderOn != null && (
-                <span className={`rounded px-1.5 py-px text-[10px] font-bold uppercase tracking-wide ${reminderOn ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
-                  {reminderOn ? 'On' : 'Off'}
+              {reminderOn != null && [['Due', reminderOn.due], ['Overdue', reminderOn.overdue]].map(([label, on]) => (
+                <span key={label} className={`rounded px-1.5 py-px text-[10px] font-bold uppercase tracking-wide ${on ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
+                  {label} {on ? 'On' : 'Off'}
                 </span>
-              )}
+              ))}
             </button>
             <button onClick={() => setShowAdd(true)}
               className="inline-flex items-center gap-1.5 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold px-3.5 py-2 rounded-lg transition-colors">
@@ -374,7 +376,7 @@ export default function Accounts() {
       {showReminders && (
         <EmiReminderModal
           onClose={() => setShowReminders(false)}
-          onConfig={(cfg) => setReminderOn(cfg.enabled)}
+          onConfig={(cfg) => setReminderOn(reminderSwitches(cfg))}
           onSent={loadReceivables} />
       )}
 
@@ -535,7 +537,7 @@ function AddReceivableModal({ initial, onClose, onSave }) {
 // Due/Overdue pill with a days-to-due line under it. Clicking opens a small menu;
 // picking the option marked AUTO (what the due date says) clears the admin
 // override, so the row goes back to automatic.
-const MENU_W = 190
+const MENU_W = 215
 const MENU_H = 112
 
 function StatusSelect({ row, onSave }) {
@@ -599,10 +601,14 @@ function StatusSelect({ row, onSave }) {
     items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus()
   }
 
+  // Before the due date the menu holds the due-reminder switch; once the date has
+  // passed, only the daily overdue-reminder switch (its own setting) is shown.
+  const pastDue    = row.auto_status === 'overdue'
+  const remindOff  = pastDue ? row.overdue_reminders_off : row.reminders_off
   const toggleReminders = async () => {
     setOpen(false)
     try {
-      await onSave({ reminders_off: !row.reminders_off })
+      await onSave(pastDue ? { overdue_reminders_off: !remindOff } : { reminders_off: !remindOff })
     } catch {
       // already alerted
     }
@@ -664,9 +670,13 @@ function StatusSelect({ row, onSave }) {
           {/* Per-row WhatsApp reminder switch (paid another way, dropped out…) */}
           <div className="my-1 border-t border-gray-100" />
           <button type="button" role="menuitem" onClick={toggleReminders}
-            title={row.reminders_off ? 'Start sending WhatsApp EMI due reminders to this student again' : 'Stop WhatsApp EMI due reminders for this student'}
+            title={pastDue
+              ? (remindOff ? 'Start the daily WhatsApp overdue reminder to this student again' : 'Stop the daily WhatsApp overdue reminder for this student')
+              : (remindOff ? 'Start sending WhatsApp EMI due reminders to this student again' : 'Stop WhatsApp EMI due reminders for this student')}
             className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-100 focus:outline-none focus-visible:bg-gray-100">
-            {row.reminders_off ? '🔔 Resume WhatsApp reminders' : '🔕 Stop WhatsApp reminders'}
+            {pastDue
+              ? (remindOff ? '🔔 Resume daily overdue reminders' : '🔕 Stop daily overdue reminders')
+              : (remindOff ? '🔔 Resume WhatsApp reminders' : '🔕 Stop WhatsApp reminders')}
           </button>
         </div>,
         document.body
@@ -806,8 +816,10 @@ function InlineEdit({ value, display, onSave, type = 'text', multiline = false, 
   return <input {...fieldProps} type={type} className={`${fieldClass} ${type === 'date' ? 'w-36' : 'w-full min-w-[200px]'}`} />
 }
 
-// ── WhatsApp EMI due reminder: note under the due date ─────────────────────
+// ── WhatsApp EMI reminder: note under the due date ─────────────────────────
+// Before the due date: the one-time due reminder. After it: the daily overdue one.
 function ReminderNote({ row }) {
+  if (row.auto_status === 'overdue') return <OverdueReminderNote row={row} />
   const reminder = row.reminder
   let note = null
   if (reminder?.status === 'sent') {
@@ -845,6 +857,48 @@ function ReminderNote({ row }) {
   )
 }
 
+function OverdueReminderNote({ row }) {
+  const o     = row.overdue_reminder
+  const today = o?.day === todayIST()
+  const count = o?.sent_count ? ` · ${o.sent_count} sent` : ''
+  let note = null
+  if (today && o.status === 'failed') {
+    note = (
+      <p className="mt-0.5 text-[10px] font-medium text-red-500"
+        title={`WATI rejected today's overdue reminder (${o.attempts} attempt${o.attempts === 1 ? '' : 's'}) — retried automatically up to 3 times`}>
+        Overdue reminder failed{count}
+      </p>
+    )
+  } else if (today && o.status === 'unknown') {
+    note = (
+      <p className="mt-0.5 text-[10px] font-medium text-amber-600"
+        title="WATI gave no clear answer today — the message may have been delivered. Check the chat in WATI. Tomorrow's reminder goes as usual.">
+        Overdue reminder: check WATI{count}
+      </p>
+    )
+  } else if (today && o.status === 'sending') {
+    note = <p className="mt-0.5 text-[10px] text-gray-400">Overdue reminder sending…</p>
+  } else if (o?.last_sent) {
+    const when = today && o.status === 'sent'
+      ? 'today'
+      : new Date(o.last_sent).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })
+    note = (
+      <p className="mt-0.5 text-[10px] font-medium text-emerald-600"
+        title={`Daily WhatsApp overdue reminder with the ${o.channel === 'link' ? 'payment link' : 'UPI ID'} — ${o.sent_count} sent so far for this EMI`}>
+        ✓ Overdue reminder sent {when}{count}
+      </p>
+    )
+  }
+  return (
+    <>
+      {note}
+      {row.overdue_reminders_off && (
+        <p className="mt-0.5 text-[10px] text-gray-400" title="The daily WhatsApp overdue reminder is stopped for this row">🔕 Overdue reminders stopped</p>
+      )}
+    </>
+  )
+}
+
 // ── WhatsApp EMI due reminder: settings, Preview, Send now ─────────────────
 const RUN_STATUS = {
   'would-send':          ['Will be sent',      'bg-indigo-50 text-indigo-700'],
@@ -869,12 +923,27 @@ const RUN_STATUS = {
   'skipped-check-emi-data': ['Fix EMI paid / total (✎)',       'bg-amber-50 text-amber-700'],
 }
 
+const fmtRun = (at) => new Date(at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' })
+
+function Switch({ on, onToggle, label }) {
+  return (
+    <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+      <button type="button" role="switch" aria-checked={on} onClick={onToggle}
+        className={`relative h-5 w-9 rounded-full transition-colors ${on ? 'bg-emerald-500' : 'bg-gray-300'}`}>
+        <span className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${on ? 'translate-x-4' : ''}`} />
+      </button>
+      <span className="text-sm font-medium text-gray-700">{label}</span>
+    </label>
+  )
+}
+
 function EmiReminderModal({ onClose, onConfig, onSent }) {
   const [data, setData]       = useState(null)  // { config, readiness }
   const [enabled, setEnabled] = useState(false)
   const [days, setDays]       = useState(7)
+  const [overdueOn, setOverdueOn] = useState(false)
   const [saving, setSaving]   = useState(false)
-  const [busy, setBusy]       = useState(null)  // 'preview' | 'send'
+  const [busy, setBusy]       = useState(null)  // { type, dryRun }
   const [result, setResult]   = useState(null)
   const [error, setError]     = useState('')
 
@@ -882,6 +951,7 @@ function EmiReminderModal({ onClose, onConfig, onSent }) {
     setData(d)
     setEnabled(d.config.enabled)
     setDays(d.config.daysBefore)
+    setOverdueOn(!!d.config.overdue?.enabled)
     onConfig(d.config)
   }
 
@@ -891,12 +961,14 @@ function EmiReminderModal({ onClose, onConfig, onSent }) {
       .catch((err) => setError(err.response?.data?.error || 'Failed to load reminder settings'))
   }, [])
 
-  const dirty = data && (enabled !== data.config.enabled || Number(days) !== data.config.daysBefore)
+  const dirty = data && (
+    enabled !== data.config.enabled || Number(days) !== data.config.daysBefore || overdueOn !== !!data.config.overdue?.enabled
+  )
 
   const save = async () => {
     setSaving(true); setError('')
     try {
-      const res = await api.put('/accounts/emi-reminders', { enabled, daysBefore: Number(days) })
+      const res = await api.put('/accounts/emi-reminders', { enabled, daysBefore: Number(days), overdueEnabled: overdueOn })
       apply(res.data)
       setResult(null)
     } catch (err) {
@@ -906,17 +978,20 @@ function EmiReminderModal({ onClose, onConfig, onSent }) {
     }
   }
 
-  const run = async (dryRun) => {
+  const run = async (type, dryRun) => {
     if (!dryRun) {
-      const n = result?.dryRun ? result.rows.filter((r) => r.status === 'would-send').length : null
+      const n = result?.dryRun && result.type === type ? result.rows.filter((r) => r.status === 'would-send').length : null
+      const what = type === 'overdue' ? "today's overdue reminder" : 'the WhatsApp due reminder'
       const ask = n != null
-        ? `Send the WhatsApp reminder to ${n} student${n === 1 ? '' : 's'} now?`
-        : 'Send WhatsApp reminders now to every student whose EMI is due soon?'
+        ? `Send ${what} to ${n} student${n === 1 ? '' : 's'} now?`
+        : type === 'overdue'
+          ? "Send today's overdue reminder now to every student with an overdue EMI?"
+          : 'Send WhatsApp reminders now to every student whose EMI is due soon?'
       if (!window.confirm(ask)) return
     }
-    setBusy(dryRun ? 'preview' : 'send'); setError('')
+    setBusy({ type, dryRun }); setError('')
     try {
-      const res = await api.post('/accounts/emi-reminders/run', { dryRun })
+      const res = await api.post('/accounts/emi-reminders/run', { type, dryRun })
       setResult(res.data)
       if (!dryRun) {
         onSent()
@@ -932,14 +1007,35 @@ function EmiReminderModal({ onClose, onConfig, onSent }) {
 
   const r = data?.readiness
   const checks = r ? [
-    [!!r.linkTemplate, 'Razorpay link template', r.linkTemplate || 'set WATI_EMI_REMINDER_LINK_TEMPLATE'],
-    [!!r.upiTemplate,  'UPI template',           r.upiTemplate  || 'set WATI_EMI_REMINDER_UPI_TEMPLATE'],
+    [!!r.linkTemplate, 'Due · link template',     r.linkTemplate || 'set WATI_EMI_REMINDER_LINK_TEMPLATE'],
+    [!!r.upiTemplate,  'Due · UPI template',      r.upiTemplate  || 'set WATI_EMI_REMINDER_UPI_TEMPLATE'],
+    [!!r.overdueLinkTemplate, 'Overdue · link template', r.overdueLinkTemplate || 'set WATI_EMI_OVERDUE_LINK_TEMPLATE'],
+    [!!r.overdueUpiTemplate,  'Overdue · UPI template',  r.overdueUpiTemplate  || 'set WATI_EMI_OVERDUE_UPI_TEMPLATE'],
     [!!r.upiId,        'UPI ID',                 r.upiId        || 'set PAYMENT_UPI_ID'],
     [!!r.contact,      'Academic Team contact',  r.contact      || 'set EMI_REMINDER_CONTACT — until then the message says "this WhatsApp number"'],
     [r.jobEnabled,     'Sending on this server', r.jobEnabled ? 'EMI_REMINDER_JOB=1' : 'off here — Preview only (set EMI_REMINDER_JOB=1 on production)'],
   ] : []
-  const last = data?.config.lastRunSummary
+  const lastLine = (c, noun) => {
+    const s = c?.lastRunSummary
+    return c?.lastRunAt
+      ? `${fmtRun(c.lastRunAt)} · ${s?.inWindow ?? 0} ${noun} · ${s?.sent ?? 0} sent · ${s?.failed ?? 0} failed · ${s?.skipped ?? 0} skipped`
+      : 'never'
+  }
   const willSend = result?.rows.filter((x) => x.status === 'would-send').length ?? 0
+  const overdueResult = result?.type === 'overdue'
+
+  const actions = (type) => (
+    <div className="flex flex-wrap items-center gap-2">
+      <button onClick={() => run(type, true)} disabled={!!busy || dirty}
+        className="px-3 py-1 text-xs font-semibold text-gray-700 border border-gray-300 hover:bg-gray-50 rounded-lg disabled:opacity-40">
+        {busy?.type === type && busy.dryRun ? 'Checking…' : 'Preview (sends nothing)'}
+      </button>
+      <button onClick={() => run(type, false)} disabled={!!busy || dirty}
+        className="px-3 py-1 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg disabled:opacity-40">
+        {busy?.type === type && !busy.dryRun ? 'Sending…' : 'Send now'}
+      </button>
+    </div>
+  )
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
@@ -948,8 +1044,7 @@ function EmiReminderModal({ onClose, onConfig, onSent }) {
           <div>
             <h3 className="font-semibold text-gray-800">WhatsApp EMI reminders</h3>
             <p className="text-xs text-gray-400 mt-0.5">
-              One message per EMI, {data?.config.daysBefore ?? 7} days before it's due, at {r?.sendHourIst ?? 10}:00 AM IST.
-              Razorpay orders get their next EMI link · manual entries get the UPI ID.
+              Sent at {r?.sendHourIst ?? 10}:00 AM IST. Razorpay orders get their next EMI link · manual entries get the UPI ID.
             </p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-lg leading-none">✕</button>
@@ -959,25 +1054,38 @@ function EmiReminderModal({ onClose, onConfig, onSent }) {
           <p className="px-5 py-10 text-center text-sm text-gray-400">{error || 'Loading…'}</p>
         ) : (
           <div className="px-5 py-4 space-y-4">
-            {/* Settings */}
-            <div className="flex flex-wrap items-center gap-4">
-              <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-                <button type="button" role="switch" aria-checked={enabled} onClick={() => setEnabled((v) => !v)}
-                  className={`relative h-5 w-9 rounded-full transition-colors ${enabled ? 'bg-emerald-500' : 'bg-gray-300'}`}>
-                  <span className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-4' : ''}`} />
-                </button>
-                <span className="text-sm font-medium text-gray-700">Send automatically every day</span>
-              </label>
-              <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-                Remind
-                <input type="number" min={1} max={30} value={days} onChange={(e) => setDays(e.target.value)}
-                  className="w-16 border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                days before the due date
-              </label>
+            {/* Before the due date — once per EMI */}
+            <div className="rounded-lg border border-gray-100 px-4 py-3 space-y-2.5">
+              <div className="flex flex-wrap items-center gap-4">
+                <Switch on={enabled} onToggle={() => setEnabled((v) => !v)} label="Before the due date" />
+                <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                  Remind
+                  <input type="number" min={1} max={30} value={days} onChange={(e) => setDays(e.target.value)}
+                    className="w-16 border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  days before the due date
+                </label>
+              </div>
+              <p className="text-xs text-gray-500">One message per EMI. Last run: {lastLine(data.config, 'due soon')}</p>
+              {actions('due')}
+            </div>
+
+            {/* After the due date — every day until paid */}
+            <div className="rounded-lg border border-gray-100 px-4 py-3 space-y-2.5">
+              <Switch on={overdueOn} onToggle={() => setOverdueOn((v) => !v)} label="After the due date — daily until paid" />
+              <p className="text-xs text-gray-500">
+                One message every day while an EMI is overdue (“you are 3 days overdue”), with the same link / UPI ID.
+                Stops once it's paid, when you set the row's status to Due, or with “Stop daily overdue reminders” on the row.
+              </p>
+              <p className="text-xs text-gray-500">Last run: {lastLine(data.config.overdue, 'overdue')}</p>
+              {actions('overdue')}
+            </div>
+
+            <div className="flex items-center gap-3">
               <button onClick={save} disabled={!dirty || saving}
-                className="ml-auto px-3.5 py-1.5 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-40">
+                className="px-3.5 py-1.5 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-40">
                 {saving ? 'Saving…' : 'Save'}
               </button>
+              {dirty && <span className="text-xs text-amber-600">Save your changes before Preview / Send now</span>}
             </div>
 
             {/* What this server can send */}
@@ -985,29 +1093,10 @@ function EmiReminderModal({ onClose, onConfig, onSent }) {
               {checks.map(([ok, label, detail]) => (
                 <div key={label} className="flex items-baseline gap-2 text-xs">
                   <span className={`w-3 font-bold ${ok ? 'text-emerald-600' : 'text-amber-600'}`}>{ok ? '✓' : '!'}</span>
-                  <span className="w-40 shrink-0 font-medium text-gray-700">{label}</span>
+                  <span className="w-44 shrink-0 font-medium text-gray-700">{label}</span>
                   <span className={ok ? 'text-gray-600' : 'text-gray-400'}>{detail}</span>
                 </div>
               ))}
-            </div>
-
-            <p className="text-xs text-gray-500">
-              Last run: {data.config.lastRunAt
-                ? `${new Date(data.config.lastRunAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' })} · ${last?.inWindow ?? 0} due soon · ${last?.sent ?? 0} sent · ${last?.failed ?? 0} failed · ${last?.skipped ?? 0} skipped`
-                : 'never'}
-            </p>
-
-            {/* Actions */}
-            <div className="flex flex-wrap items-center gap-2">
-              <button onClick={() => run(true)} disabled={!!busy || dirty}
-                className="px-3.5 py-1.5 text-sm font-semibold text-gray-700 border border-gray-300 hover:bg-gray-50 rounded-lg disabled:opacity-40">
-                {busy === 'preview' ? 'Checking…' : 'Preview (sends nothing)'}
-              </button>
-              <button onClick={() => run(false)} disabled={!!busy || dirty}
-                className="px-3.5 py-1.5 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg disabled:opacity-40">
-                {busy === 'send' ? 'Sending…' : 'Send now'}
-              </button>
-              {dirty && <span className="text-xs text-amber-600">Save your changes first</span>}
             </div>
 
             {error && <p className="text-xs text-red-500">{error}</p>}
@@ -1019,16 +1108,22 @@ function EmiReminderModal({ onClose, onConfig, onSent }) {
               ) : (
                 <div className="rounded-lg border border-gray-100">
                   <p className="px-4 py-2.5 text-xs text-gray-500 border-b border-gray-100">
-                    <span className="font-semibold text-gray-700">{result.dryRun ? 'Preview' : 'Sent'}</span>
-                    {' · '}{result.inWindow} EMI{result.inWindow === 1 ? '' : 's'} due in the next {result.daysBefore} days
+                    <span className="font-semibold text-gray-700">
+                      {overdueResult ? 'Overdue' : 'Due'} · {result.dryRun ? 'Preview' : 'Sent'}
+                    </span>
+                    {' · '}{overdueResult
+                      ? `${result.inWindow} overdue EMI${result.inWindow === 1 ? '' : 's'}`
+                      : `${result.inWindow} EMI${result.inWindow === 1 ? '' : 's'} due in the next ${result.daysBefore} days`}
                     {result.dryRun
                       ? ` · ${willSend} will be sent`
                       : ` · ${result.sent} sent · ${result.failed} failed${result.unknown ? ` · ${result.unknown} unknown (check WATI)` : ''}`}
-                    {result.alreadySent > 0 && ` · ${result.alreadySent} already sent`}
+                    {result.alreadySent > 0 && ` · ${result.alreadySent} already sent${overdueResult ? ' today' : ''}`}
                     {result.skipped > 0 && ` · ${result.skipped} skipped`}
                   </p>
                   {result.rows.length === 0 ? (
-                    <p className="px-4 py-6 text-center text-sm text-gray-400">No EMIs fall due in the next {result.daysBefore} days.</p>
+                    <p className="px-4 py-6 text-center text-sm text-gray-400">
+                      {overdueResult ? 'No overdue EMIs right now.' : `No EMIs fall due in the next ${result.daysBefore} days.`}
+                    </p>
                   ) : (
                     <table className="w-full text-sm">
                       <thead className="bg-gray-50 text-left text-[11px] font-semibold uppercase tracking-wider text-gray-500">
@@ -1053,7 +1148,7 @@ function EmiReminderModal({ onClose, onConfig, onSent }) {
                               <td className="px-4 py-2 text-gray-600">EMI {x.emi}</td>
                               <td className="px-4 py-2 whitespace-nowrap text-gray-600">
                                 {fmtDay(x.due_date)}
-                                <p className="text-[11px] text-gray-400">{dueInWords(x.due_date)}</p>
+                                <p className={`text-[11px] ${overdueResult ? 'text-red-500' : 'text-gray-400'}`}>{dueInWords(x.due_date)}</p>
                               </td>
                               <td className="px-4 py-2 text-gray-700">{fmt(x.amount)}</td>
                               <td className="px-4 py-2 text-gray-600">
@@ -1066,7 +1161,9 @@ function EmiReminderModal({ onClose, onConfig, onSent }) {
                                 )}
                               </td>
                               <td className="px-4 py-2">
-                                <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${color}`}>{label}</span>
+                                <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${color}`}>
+                                  {overdueResult && x.status === 'already-sent' ? 'Already sent today' : label}
+                                </span>
                                 {x.error && <p className="mt-0.5 text-[11px] text-gray-400">{x.error}</p>}
                               </td>
                             </tr>
