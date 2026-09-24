@@ -263,6 +263,18 @@ function OrderDrawer({ orderId, onClose }) {
                   <span className="text-xs font-semibold text-gray-500">Total</span>
                   <span className="text-sm font-bold text-gray-800">{fmtAmount(order.items)}</span>
                 </div>
+                {order.emi && (
+                  <>
+                    <div className="flex justify-between px-4 py-2 bg-gray-50">
+                      <span className="text-xs font-semibold text-gray-500">Paid (EMI {order.emi.emi_paid}/{order.emi.emi_total})</span>
+                      <span className="text-sm font-bold text-emerald-700">{rupees(order.emi.paid)}</span>
+                    </div>
+                    <div className="flex justify-between px-4 py-2 bg-gray-50">
+                      <span className="text-xs font-semibold text-gray-500">Pending</span>
+                      <span className={`text-sm font-bold ${order.emi.pending > 0 ? 'text-red-600' : 'text-gray-800'}`}>{rupees(order.emi.pending)}</span>
+                    </div>
+                  </>
+                )}
               </div>
             </section>
 
@@ -1047,7 +1059,7 @@ export default function AllOrders() {
       const headers = [
         'Date', 'Order ID',
         'Customer Name', 'Customer Phone', 'Customer Email',
-        'Source', 'Items', 'Total Amount',
+        'Source', 'Items', 'Total Amount', 'Paid Amount', 'Pending Amount',
         'Payment Status', 'Fulfillment Status', 'Class Scheduled', 'Admin Notes',
       ]
       if (hasDelivery) {
@@ -1075,6 +1087,8 @@ export default function AllOrders() {
           o.source || '',
           items,
           total,
+          o.emi ? o.emi.paid : total,
+          o.emi ? o.emi.pending : 0,
           o.status || '',
           o.fulfillmentStatus || '',
           typeof o.scheduled === 'boolean' ? (o.scheduled ? 'Yes' : 'No') : '',
@@ -1425,7 +1439,19 @@ export default function AllOrders() {
                       )}
                       <div className="text-gray-400 mt-1">{(o.items || []).length} item(s)</div>
                     </td>
-                    <td className="px-4 py-3 text-gray-700 font-medium text-xs">{fmtAmount(o.items)}</td>
+                    <td className="px-4 py-3 text-gray-700 font-medium text-xs">
+                      {fmtAmount(o.items)}
+                      {o.emi?.pending > 0 && (
+                        <div
+                          className="mt-1 font-normal whitespace-nowrap"
+                          title={`EMI ${o.emi.emi_paid}/${o.emi.emi_total} paid — total ${rupees(o.emi.total)}, paid ${rupees(o.emi.paid)}, pending ${rupees(o.emi.pending)}`}
+                        >
+                          <span className="text-emerald-700">{rupees(o.emi.paid)} paid</span>
+                          <span className="text-gray-300"> · </span>
+                          <span className="text-red-600">{rupees(o.emi.pending)} due</span>
+                        </div>
+                      )}
+                    </td>
                     <td className="px-4 py-3"><StatusBadge value={o.status} /></td>
                     <td className="px-4 py-3"><StatusBadge value={o.fulfillmentStatus} /></td>
                     <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
