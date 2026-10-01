@@ -59,6 +59,41 @@ function filterReceivables(rows, f) {
   })
 }
 
+// Download the rows currently shown (after filters) as a CSV, with a total row.
+function exportReceivablesCsv(rows, upiId, filters) {
+  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
+  const headers = ['Date of Sale', 'Customer', 'Phone', 'Product', 'Amount', 'EMI', 'Due Date', 'Days',
+    'Outstanding', 'Pay Link / UPI', 'Pay Link Amount', 'Status', 'Remarks']
+  const body = rows.map((r) => [
+    r.sale_date ? fmtDay(r.sale_date) : '',
+    r.name + (r.manual ? ' (Manual)' : '') + (r.refunded ? ' (Refunded)' : ''),
+    r.phone || '',
+    r.product || '',
+    r.full_amount ?? '',
+    r.emi_paid != null && r.emi_total != null ? `${r.emi_paid}/${r.emi_total}` : '',
+    r.due_date ? fmtDay(r.due_date) : '',
+    dueInWords(r.due_date),
+    r.outstanding || 0,
+    r.pay_link ? r.pay_link.url : r.manual ? (upiId || '') : 'No open link',
+    r.pay_link ? `EMI ${r.pay_link.emi_index} link - ${r.pay_link.amount}` : r.manual && upiId ? 'UPI' : '',
+    r.status === 'overdue' ? 'Overdue' : 'Due',
+    r.remarks || '',
+  ])
+  const sum = (key) => rows.reduce((s, r) => s + (r[key] || 0), 0)
+  const totalRow = [`TOTAL (${rows.length} customers)`, '', '', '', sum('full_amount'), '', '', '', sum('outstanding'), '', '', '', '']
+  const csv = [headers, ...body, [], totalRow].map((r) => r.map(esc).join(',')).join('\n')
+
+  const label = filters.month
+    ? fmtMonth(filters.month).replace(/\s+/g, '-').toLowerCase()
+    : filters.from || filters.to ? `${filters.from || 'start'}-to-${filters.to || 'end'}` : todayIST()
+  const url = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }))
+  const a   = document.createElement('a')
+  a.href     = url
+  a.download = `receivables-${label}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 const TYPE_LABELS = {
   sale:                { label: 'Sale',          color: 'bg-emerald-100 text-emerald-700' },
   receivable_created:  { label: 'Receivable',    color: 'bg-orange-100 text-orange-700'  },
@@ -280,6 +315,11 @@ export default function Accounts() {
               {hasFilter ? `${shown.length} of ${receivables.length}` : `${receivables.length} customers`}
               {' · '}<span className="font-semibold text-orange-600">{fmt(shownOwed)}</span> outstanding
             </span>
+            <button onClick={() => exportReceivablesCsv(shown, upiId, filters)} disabled={shown.length === 0}
+              title="Download the rows shown (with the current filters) as a CSV file"
+              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg disabled:opacity-50 transition-colors">
+              ↓ Export CSV
+            </button>
           </div>
 
           {shown.length === 0 ? (
