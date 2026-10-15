@@ -71,6 +71,7 @@ function fmtAgo(d) {
 // own row even at the same place, so they read as events.
 function kindOf(s, afterDispatch) {
   if (s.status === 'Manifested') return 'booked'
+  if (s.status === 'Not Picked') return 'notpicked'   // Delhivery never received it from us
   if (s.status === 'Dispatched') return 'out'
   if (s.status === 'Delivered' || s.status === 'RTO Delivered' || s.status === 'Returned') return 'done'
   if (s.status === 'RTO' && s.statusType === 'DL') return 'done'
@@ -84,6 +85,7 @@ function stopLabel(st, prev) {
     case 'booked': return 'Booked with courier'
     case 'out':    return ret ? 'Out for return delivery' : 'Out for delivery'
     case 'failed': return 'Delivery attempt failed'
+    case 'notpicked': return 'Not picked up'
     case 'done':   return ret ? 'Return accepted' : 'Delivered'
     default: {
       if (!ret && (!prev || prev.kind === 'booked')) return 'Picked up'
@@ -143,6 +145,7 @@ function buildModel(shipment) {
   else if (['RTO Delivered', 'Returned', 'DTO'].includes(current) || (current === 'RTO' && lastScan?.statusType === 'DL')) state = 'returned'
   else if (ret.length || current === 'RTO') state = 'returning'
   else if (['Lost', 'LOST'].includes(current)) state = 'lost'
+  else if (current === 'Not Picked') state = 'notpicked'
   else if (current === 'Cancelled') state = 'cancelled'
   else if (current === 'Dispatched') state = 'out'
   else if (['In Transit', 'Pending'].includes(current) || delivery.some((s) => s.kind === 'move')) state = 'transit'
@@ -158,8 +161,7 @@ function buildModel(shipment) {
   // counts right after a failed delivery attempt (otherwise it's just arrival).
   const lastStop  = stops[stops.length - 1]
   const failedAttempt = current === 'Pending' && lastStop?.kind === 'failed'
-  const canReship = ['returned', 'returning', 'lost', 'cancelled'].includes(state)
-    || current === 'Not Picked' || failedAttempt
+  const canReship = ['returned', 'returning', 'lost', 'cancelled', 'notpicked'].includes(state) || failedAttempt
   // Delhivery may still deliver / pick up the old parcel — must be cancelled first.
   const oldStillActive = !ret.length && (current === 'Not Picked' || failedAttempt)
 
@@ -167,7 +169,7 @@ function buildModel(shipment) {
     scans, stops, delivery, ret, current, state, attempts, returnReason, lastScan, canReship, oldStillActive,
     exceptions: scans.filter((s) => s.notable),
     bookedAt:   scans[0]?.at || null,
-    pickedAt:   shipment.courier?.pickedUpAt ? new Date(shipment.courier.pickedUpAt) : (delivery.find((s) => s.kind === 'move')?.first || null),
+    pickedAt:   delivery.find((s) => s.kind === 'move')?.first || null,   // first real movement scan
     deliveredAt: state === 'delivered' ? (delivery.find((s) => s.kind === 'done')?.last || lastScan?.at || null) : null,
     returnStartedAt: ret[0]?.first || (shipment.courier?.rtoStartedAt ? new Date(shipment.courier.rtoStartedAt) : null),
     returnedAt: state === 'returned' ? (ret.find((s) => s.kind === 'done')?.last || lastScan?.at || null) : null,
@@ -181,6 +183,7 @@ const HERO = {
   returned:  { title: 'Returned to sender',  tone: 'rose',    icon: 'back' },
   returning: { title: 'Returning to sender', tone: 'amber',   icon: 'back' },
   lost:      { title: 'Lost in transit',     tone: 'rose',    icon: 'alert' },
+  notpicked: { title: 'Not picked up',       tone: 'rose',    icon: 'x' },
   cancelled: { title: 'Cancelled',           tone: 'gray',    icon: 'x' },
   out:       { title: 'Out for delivery',    tone: 'indigo',  icon: 'truck' },
   transit:   { title: 'In transit',          tone: 'indigo',  icon: 'truck' },
@@ -250,6 +253,7 @@ function Hero({ m, shipment }) {
   let sub = ''
   if (m.state === 'delivered' && m.deliveredAt)    sub = `${fmtStamp(m.deliveredAt)}${where ? ` · ${where}` : ''}`
   else if (m.state === 'returned' && m.returnedAt) sub = `Accepted back ${fmtStamp(m.returnedAt)}${where ? ` · ${where}` : ''}`
+  else if (m.state === 'notpicked' && m.lastScan) sub = `Delhivery never received this parcel${m.lastScan.instructions ? ` — “${m.lastScan.instructions}”` : ''} · ${fmtDay(m.lastScan.at)}`
   else if (m.lastScan)                             sub = `Last update ${fmtAgo(m.lastScan.at)}${where ? ` · ${where}` : ''}`
 
   return (
@@ -270,12 +274,12 @@ function Hero({ m, shipment }) {
   )
 }
 
-function Route({ shipment, m }) {
+function Route({ shipment, m, destination }) {
   const origin = readLocation(shipment.courier?.origin || m.delivery[0]?.location).name
-  const dest = shipment.courier?.destination
+  const dest = destination?.city || shipment.courier?.destination
     || readLocation([...m.delivery].reverse().find((s) => ['D', 'DC'].includes(s.loc.code))?.location).name
   if (!origin && !dest) return null
-  const pin = shipment.courier?.destinationPin
+  const pin = destination?.pincode || shipment.courier?.destinationPin
   return (
     <div className="flex items-center gap-2 text-xs">
       <div className="min-w-0">
@@ -294,7 +298,7 @@ function Route({ shipment, m }) {
 }
 
 // Circles + connecting lines. `failedAt` marks a step that will never be reached.
-function Stepper({ steps, reached, color, failedAt = -1 }) {
+function Stepper({ steps, reached, color, failedAt = -1, failedLabel = 'Not delivered' }) {
   return (
     <ol className="flex items-start">
       {steps.map((s, i) => {
@@ -309,7 +313,7 @@ function Stepper({ steps, reached, color, failedAt = -1 }) {
             </span>
             <span className={`mt-1.5 text-[11px] text-center leading-tight px-0.5 ${
               failed ? 'text-rose-600 font-medium' : i === reached ? 'text-gray-900 font-semibold' : done ? 'text-gray-600' : 'text-gray-400'}`}>
-              {failed ? 'Not delivered' : s}
+              {failed ? failedLabel : s}
             </span>
           </li>
         )
@@ -325,13 +329,15 @@ function Progress({ m }) {
   if (m.delivery.some((s) => s.kind === 'out')) reached = 3
   if (m.state === 'delivered') reached = 4
   const failed = m.ret.length > 0 || ['returned', 'returning', 'lost', 'cancelled'].includes(m.state)
+  const notPicked = m.state === 'notpicked'
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-4">
       <div>
         {m.ret.length > 0 && <p className="text-[11px] uppercase tracking-wider text-gray-400 mb-2">Delivery</p>}
         <Stepper steps={['Booked', 'Picked up', 'In transit', 'Out for delivery', 'Delivered']}
-          reached={reached} color={m.state === 'delivered' ? 'bg-emerald-600' : 'bg-indigo-600'} failedAt={failed ? 4 : -1} />
+          reached={notPicked ? 0 : reached} color={m.state === 'delivered' ? 'bg-emerald-600' : 'bg-indigo-600'}
+          failedAt={notPicked ? 1 : failed ? 4 : -1} failedLabel={notPicked ? 'Not picked up' : 'Not delivered'} />
       </div>
       {m.ret.length > 0 && (
         <div className="pt-3 border-t border-gray-100">
@@ -371,7 +377,7 @@ function Facts({ m, shipment }) {
     } else if (comingBack) {
       promiseNote = 'Missed — sent back'
       promiseTone = 'text-rose-600'
-    } else if (!['lost', 'cancelled'].includes(m.state) && Date.now() > deadline) {
+    } else if (!['lost', 'cancelled', 'notpicked'].includes(m.state) && Date.now() > deadline) {
       promiseNote = `Overdue by ${fmtSpan(Date.now() - deadline)}`
       promiseTone = 'text-rose-600'
     }
@@ -441,7 +447,7 @@ function Stop({ st, isTop, isLast, open, onToggle, accent }) {
   const n = st.scans.length
   const milestone = st.kind !== 'move'
   const dot =
-    st.kind === 'failed' ? 'bg-rose-500'
+    st.kind === 'failed' || st.kind === 'notpicked' ? 'bg-rose-500'
     : st.kind === 'done' ? (st.trip === 'return' ? 'bg-amber-500' : 'bg-emerald-500')
     : isTop ? accent
     : milestone ? 'bg-gray-500' : 'bg-gray-300'
@@ -457,7 +463,7 @@ function Stop({ st, isTop, isLast, open, onToggle, accent }) {
         <button type="button" onClick={onToggle} aria-expanded={open}
           className="w-full text-left rounded-md -mx-1.5 px-1.5 py-1 hover:bg-gray-50 group">
           <div className="flex items-baseline justify-between gap-3">
-            <p className={`text-sm ${st.kind === 'failed' ? 'font-semibold text-rose-700' : milestone || isTop ? 'font-semibold text-gray-900' : 'font-medium text-gray-800'}`}>
+            <p className={`text-sm ${st.kind === 'failed' || st.kind === 'notpicked' ? 'font-semibold text-rose-700' : milestone || isTop ? 'font-semibold text-gray-900' : 'font-medium text-gray-800'}`}>
               {st.label}
             </p>
             <span className="text-xs text-gray-500 whitespace-nowrap tabular-nums">{fmtStamp(st.last, st.timed)}</span>
@@ -524,7 +530,9 @@ function Trip({ title, stops, accent, topKey, isOpen, onToggle }) {
 // Props:
 //   shipment      the shipment to show (live or an earlier, reshipped one)
 //   renderActions (m, shipment) => node — e.g. the order page's "Send a new parcel" button
-export default function ShipmentTracking({ shipment: initial, renderActions }) {
+//   destination   { city, pincode } from the order's address — Delhivery's own
+//                 "Destination" is often a centre name (e.g. "Ceylon Hostage Camp")
+export default function ShipmentTracking({ shipment: initial, renderActions, destination }) {
   const awb = initial?.awb
   const [shipment, setShipment] = useState(initial)
   const [sync, setSync]         = useState('loading')   // loading | ok | stale | error
@@ -579,7 +587,7 @@ export default function ShipmentTracking({ shipment: initial, renderActions }) {
       ) : (
         <>
           <Hero m={m} shipment={shipment} />
-          <div className="px-1"><Route m={m} shipment={shipment} /></div>
+          <div className="px-1"><Route m={m} shipment={shipment} destination={destination} /></div>
           <Progress m={m} />
           {renderActions && renderActions(m, shipment)}
           <Facts m={m} shipment={shipment} />

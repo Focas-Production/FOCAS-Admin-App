@@ -373,12 +373,15 @@ function OrderDrawer({ orderId, onClose }) {
                   <ShipmentTracking
                     key={order.shipment.awb}
                     shipment={order.shipment}
+                    destination={order.address?.city ? { city: order.address.city, pincode: displayPincode(order.address) } : undefined}
                     renderActions={(m) => m.canReship && (
                       <div className="flex items-center justify-between gap-3 rounded-xl border border-indigo-200 bg-white px-4 py-3">
                         <p className="text-xs text-gray-600">
-                          {m.oldStillActive
-                            ? 'Delivery failed. You can send a new parcel — cancel this one in Delhivery One first.'
-                            : 'This parcel won’t reach the student. You can send a new one now — no need to wait for the return.'}
+                          {m.state === 'notpicked'
+                            ? 'Delhivery never picked this parcel up. Send a new one — make sure this booking is cancelled in Delhivery One.'
+                            : m.oldStillActive
+                              ? 'Delivery failed. You can send a new parcel — cancel this one in Delhivery One first.'
+                              : 'This parcel won’t reach the student. You can send a new one now — no need to wait for the return.'}
                         </p>
                         <button type="button" onClick={() => setShowReship({ oldStillActive: m.oldStillActive })}
                           className="whitespace-nowrap rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700">
