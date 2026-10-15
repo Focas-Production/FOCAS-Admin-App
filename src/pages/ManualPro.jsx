@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { PDFDocument } from 'pdf-lib';
 import api from '../services/api';
+import ShipmentTracking from '../components/ShipmentTracking';
 
 const GREEN = '#1D9E75';
 
@@ -462,11 +463,7 @@ export default function ManualPro() {
 
 /* ── Shipment status history popup ───────────────────────────────── */
 function StatusHistoryPopup({ order, onClose }) {
-  const ship    = order.shipment || {};
-  const history = [...(ship.statusHistory || [])].sort(
-    (a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0)
-  );
-  const fmt = (d) => d ? new Date(d).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+  const ship = order.shipment || {};
 
   return (
     <div
@@ -488,34 +485,7 @@ function StatusHistoryPopup({ order, onClose }) {
         </div>
 
         <div style={{ padding: '18px 22px', overflowY: 'auto' }}>
-          {ship.trackingStatus && (
-            <div style={{ background: '#eef2ff', border: '1.5px solid #c7d2fe', borderRadius: 12, padding: '12px 16px', marginBottom: 16 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#6366f1', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Current Status</div>
-              <div style={{ fontSize: 16, fontWeight: 900, color: '#3730a3', marginTop: 2 }}>{ship.trackingStatus}</div>
-              {ship.trackingLocation && <div style={{ fontSize: 12, color: '#6366f1', marginTop: 2 }}>{ship.trackingLocation}</div>}
-            </div>
-          )}
-
-          {history.length === 0 ? (
-            <div style={{ color: '#94a3b8', fontSize: 14, padding: '20px 0', textAlign: 'center' }}>No status history yet.</div>
-          ) : (
-            <div>
-              {history.map((h, i) => (
-                <div key={i} style={{ display: 'flex', gap: 12, paddingBottom: 16, position: 'relative' }}>
-                  {/* timeline dot + line */}
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
-                    <span style={{ width: 11, height: 11, borderRadius: 999, background: i === 0 ? GREEN : '#cbd5e1', marginTop: 3 }} />
-                    {i < history.length - 1 && <span style={{ flex: 1, width: 2, background: '#e2e8f0', marginTop: 2 }} />}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>{h.status || '—'}</div>
-                    {h.location && <div style={{ fontSize: 12, color: '#64748b', marginTop: 1 }}>{h.location}</div>}
-                    <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 1 }}>{fmt(h.timestamp)}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          <ShipmentTracking key={ship.awb} shipment={ship} />
         </div>
       </div>
     </div>

@@ -2,6 +2,8 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import api, { API_BASE } from '../services/api'
 import StatusBadge from '../components/StatusBadge'
 import Pagination from '../components/Pagination'
+import ShipmentTracking from '../components/ShipmentTracking'
+import ReshipModal from '../components/ReshipModal'
 
 const SOURCE_TABS = [
   { key: '', label: 'All' },
@@ -71,6 +73,41 @@ function ProofImage({ proofKey, name }) {
   )
 }
 
+// Earlier parcels of a reshipped order, newest first. Each stays collapsed until
+// opened; open, it is the full tracking view (it keeps syncing until the parcel
+// is back with us).
+function PreviousParcels({ shipments }) {
+  const [open, setOpen] = useState(null)
+  const list = [...shipments].reverse()
+  return (
+    <div className="mt-3 space-y-2">
+      <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Previous parcels ({list.length})</h4>
+      {list.map((s) => (
+        <div key={s.awb} className="rounded-lg border border-gray-200 bg-white">
+          <button type="button" onClick={() => setOpen(open === s.awb ? null : s.awb)} aria-expanded={open === s.awb}
+            className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-gray-50">
+            <span className="min-w-0">
+              <span className="flex items-center gap-2">
+                <span className="font-mono text-sm text-gray-800">{s.awb}</span>
+                <StatusBadge value={s.trackingStatus || null} />
+              </span>
+              <span className="block text-xs text-gray-500 mt-0.5 truncate">
+                Reshipped {fmt(s.endedAt)}{s.endedBy ? ` by ${s.endedBy}` : ''}{s.endNote ? ` — ${s.endNote}` : ''}
+              </span>
+            </span>
+            <span className="text-xs text-indigo-600 whitespace-nowrap">{open === s.awb ? 'Hide' : 'View'}</span>
+          </button>
+          {open === s.awb && (
+            <div className="border-t border-gray-100 bg-gray-50 px-4 py-4">
+              <ShipmentTracking key={s.awb} shipment={s} />
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ─── Order Detail Drawer ─────────────────────────────────────────────────────
 
 function OrderDrawer({ orderId, onClose }) {
@@ -89,6 +126,9 @@ function OrderDrawer({ orderId, onClose }) {
   const [refundSaving, setRefundSaving] = useState(false)
   const [refundError, setRefundError]   = useState('')
 
+  const [showReship, setShowReship] = useState(null)   // { oldStillActive } while the form is open
+  const [reshipDone, setReshipDone] = useState(null)   // { awb, previousAwb } after a reship
+
   useEffect(() => {
     if (!orderId) return
     setLoading(true)
@@ -100,6 +140,17 @@ function OrderDrawer({ orderId, onClose }) {
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [orderId])
+
+  async function afterReship(result) {
+    setShowReship(null)
+    setReshipDone(result)
+    try {
+      const { data } = await api.get(`/admin/purchases/${orderId}`)
+      setOrder(data.purchase)
+    } catch (err) {
+      console.error(err)
+    }
+  }
 
   async function saveNotes() {
     setSaving(true)
@@ -312,43 +363,38 @@ function OrderDrawer({ orderId, onClose }) {
             {order.shipment?.awb && (
               <section>
                 <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Shipment</h3>
-                <div className="bg-gray-50 rounded-lg px-4 py-3 space-y-2 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-500">AWB</span>
-                    <span className="font-mono text-gray-800">{order.shipment.awb}</span>
+                {reshipDone && (
+                  <div className="mb-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs text-emerald-800">
+                    New parcel booked — AWB <span className="font-mono font-semibold">{reshipDone.awb}</span>.
+                    The returned parcel is kept below under “Previous parcels”.
                   </div>
-                  {order.shipment.trackingStatus && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-500">Status</span>
-                      <StatusBadge value={order.shipment.trackingStatus} />
-                    </div>
-                  )}
-                  {order.shipment.trackingLocation && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-500">Location</span>
-                      <span className="text-gray-700">{order.shipment.trackingLocation}</span>
-                    </div>
-                  )}
-                  {order.shipment.lastStatusAt && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-500">Last update</span>
-                      <span className="text-gray-700">{fmt(order.shipment.lastStatusAt)}</span>
-                    </div>
-                  )}
-                  {/* Status history */}
-                  {order.shipment.statusHistory?.length > 0 && (
-                    <div className="mt-2 pt-2 border-t border-gray-200 space-y-1">
-                      {[...order.shipment.statusHistory].reverse().map((h, i) => (
-                        <div key={i} className="flex gap-2 text-xs text-gray-500">
-                          <span className="whitespace-nowrap text-gray-400">{fmt(h.timestamp)}</span>
-                          <span className="font-medium text-gray-700">{h.status}</span>
-                          {h.location && <span>· {h.location}</span>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                )}
+                <div className="bg-gray-50 rounded-lg px-4 py-4">
+                  <ShipmentTracking
+                    key={order.shipment.awb}
+                    shipment={order.shipment}
+                    renderActions={(m) => m.canReship && (
+                      <div className="flex items-center justify-between gap-3 rounded-xl border border-indigo-200 bg-white px-4 py-3">
+                        <p className="text-xs text-gray-600">
+                          {m.oldStillActive
+                            ? 'Delivery failed. You can send a new parcel — cancel this one in Delhivery One first.'
+                            : 'This parcel won’t reach the student. You can send a new one now — no need to wait for the return.'}
+                        </p>
+                        <button type="button" onClick={() => setShowReship({ oldStillActive: m.oldStillActive })}
+                          className="whitespace-nowrap rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700">
+                          Send a new parcel
+                        </button>
+                      </div>
+                    )}
+                  />
                 </div>
+                {order.previousShipments?.length > 0 && (
+                  <PreviousParcels shipments={order.previousShipments} />
+                )}
               </section>
+            )}
+            {showReship && (
+              <ReshipModal order={order} oldStillActive={showReship.oldStillActive} onClose={() => setShowReship(null)} onDone={afterReship} />
             )}
 
             {/* Dates */}
