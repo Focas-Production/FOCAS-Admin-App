@@ -73,6 +73,9 @@ function calcEmiPreview(total, count) {
   return arr
 }
 
+// 1 → "1st", 2 → "2nd", 3 → "3rd", 4 → "4th" …
+const ordinal = (n) => `${n}${['th', 'st', 'nd', 'rd'][n] || 'th'}`
+
 // ── Custom Product Form (inline) ──────────────────────────────────────────────
 function CustomProductRow({ onAdd, requireWeight }) {
   const [name,   setName]   = useState('')
@@ -189,7 +192,7 @@ function CreateModal({ onClose, onCreated }) {
     setSyncAfter(1)
   }
 
-  // Choose how many custom instalments (2 or 3), preserving any typed values
+  // Choose how many custom instalments (2 to 6), preserving any typed values
   function setCustomCount(n) {
     setCustomAmounts((prev) => Array.from({ length: n }, (_, i) => prev[i] ?? ''))
     if (syncAfter > n) setSyncAfter(n)
@@ -255,7 +258,7 @@ function CreateModal({ onClose, onCreated }) {
     if (selectedItems.some((i) => i.price < 1)) { setError('All items must have a price > 0'); return }
 
     if (customMode) {
-      if (![2, 3].includes(customAmounts.length)) { setError('Choose 2 or 3 instalments for Custom EMI'); return }
+      if (customAmounts.length < 2 || customAmounts.length > 6) { setError('Choose 2 to 6 instalments for Custom EMI'); return }
       if (customAmounts.some((a) => !a || Number(a) < 1)) { setError('Enter a valid amount (≥ 1) for each instalment'); return }
       const sum = customAmounts.reduce((s, a) => s + (Math.round(Number(a)) || 0), 0)
       if (sum !== totalAmount) {
@@ -647,7 +650,7 @@ function CreateModal({ onClose, onCreated }) {
             {customMode && (
               <div className="mt-3 space-y-3 rounded-lg border border-gray-200 bg-gray-50/60 p-3">
                 <div className="flex gap-2">
-                  {[2, 3].map((n) => (
+                  {[2, 3, 4, 5, 6].map((n) => (
                     <button
                       key={n}
                       type="button"
@@ -802,7 +805,7 @@ function CreateModal({ onClose, onCreated }) {
           {shipToHome && (
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Show Sync Button After</label>
-              <div className="flex gap-2">
+              <div className={maxSync > 3 ? 'grid grid-cols-3 gap-2' : 'flex gap-2'}>
                 {Array.from({ length: maxSync }, (_, i) => i + 1).map((n) => (
                   <button
                     key={n}
@@ -817,8 +820,8 @@ function CreateModal({ onClose, onCreated }) {
                     {n === 1 && !effCount
                       ? 'After Full Payment'
                       : n === maxSync && effCount
-                      ? `After ${n}${n === 1 ? 'st' : n === 2 ? 'nd' : 'rd'} (Final)`
-                      : `After ${n}${n === 1 ? 'st' : n === 2 ? 'nd' : 'rd'} Payment`}
+                      ? `After ${ordinal(n)} (Final)`
+                      : `After ${ordinal(n)} Payment`}
                   </button>
                 ))}
               </div>
