@@ -11,6 +11,8 @@ export default function Users() {
   const [users, setUsers]           = useState([])
   const [loading, setLoading]       = useState(true)
   const [search, setSearch]         = useState('')
+  const [role, setRole]             = useState('')
+  const [counts, setCounts]         = useState(null)
   const [expanded, setExpanded]     = useState(null)
   const [page, setPage]             = useState(1)
   const [limit, setLimit]           = useState(20)
@@ -22,15 +24,17 @@ export default function Users() {
     try {
       const params = new URLSearchParams({ page: p, limit: l })
       if (s) params.set('search', s)
+      if (role) params.set('role', role)
       const { data } = await api.get(`/admin/users?${params}`)
       setUsers(data.users || [])
       setPagination(data.pagination || { total: 0, totalPages: 1 })
+      setCounts(data.counts || null)
     } catch (err) {
       console.error(err)
     } finally {
       setLoading(false)
     }
-  }, [page, limit, search])
+  }, [page, limit, search, role])
 
   useEffect(() => { load() }, [load])
 
@@ -55,7 +59,23 @@ export default function Users() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-500">{pagination.total} total users</p>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Same precedence as the server: admin, then mentor, else student. */}
+          {[
+            { key: '',        label: 'All users', count: counts?.all },
+            { key: 'admin',   label: 'Admins',    count: counts?.admin },
+            { key: 'mentor',  label: 'Mentors',   count: counts?.mentor },
+            { key: 'student', label: 'Students',  count: counts?.student },
+          ].map((o) => (
+            <button key={o.key || 'all'} onClick={() => { setRole(o.key); setPage(1) }}
+              className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${
+                role === o.key
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}>
+              {o.label}{o.count != null ? ` · ${o.count}` : ''}
+            </button>
+          ))}
+        </div>
         <input
           type="text"
           placeholder="Search name, phone, email..."
@@ -96,8 +116,10 @@ export default function Users() {
                       <td className="px-4 py-3 font-mono text-xs text-gray-600">{u.phoneNumber || '—'}</td>
                       <td className="px-4 py-3 text-xs text-gray-600 truncate max-w-[180px]">{u.email || '—'}</td>
                       <td className="px-4 py-3">
-                        {u.isAdmin && (
+                        {u.isAdmin ? (
                           <span className="bg-amber-100 text-amber-800 text-xs font-medium px-2 py-0.5 rounded">Admin</span>
+                        ) : u.isMentor && (
+                          <span className="bg-purple-100 text-purple-700 text-xs font-medium px-2 py-0.5 rounded">Mentor</span>
                         )}
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-500">
