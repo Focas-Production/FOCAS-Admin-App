@@ -310,6 +310,18 @@ function OrderDrawer({ orderId, onClose }) {
                     </span>
                   </div>
                 ))}
+                {order.discount && (
+                  <>
+                    <div className="flex justify-between px-4 py-2 bg-gray-50">
+                      <span className="text-xs font-semibold text-gray-500">Price before discount</span>
+                      <span className="text-sm text-gray-500 line-through">{rupees(order.discount.original)}</span>
+                    </div>
+                    <div className="flex justify-between px-4 py-2 bg-gray-50">
+                      <span className="text-xs font-semibold text-emerald-700">Discount</span>
+                      <span className="text-sm font-semibold text-emerald-700">−{rupees(order.discount.amount)}</span>
+                    </div>
+                  </>
+                )}
                 <div className="flex justify-between px-4 py-2 bg-gray-50">
                   <span className="text-xs font-semibold text-gray-500">Total</span>
                   <span className="text-sm font-bold text-gray-800">{fmtAmount(order.items)}</span>
@@ -646,17 +658,21 @@ function NotesCell({ orderId, initial }) {
 }
 
 // ─── Record GPay Payment Modal ───────────────────────────────────────────────
-// Records an offline GPay payment for an existing product. The backend runs the
-// same flow as a fully-paid custom order (purchase, grants, inventory, WATI msg).
+// Records an offline GPay payment for one or more existing products, with an
+// optional ₹ discount. The backend runs the same flow as a fully-paid custom
+// order (purchase, grants, inventory, WATI msg).
 
 function GpayPaymentModal({ onClose, onSuccess }) {
   const [products, setProducts] = useState([])
   const [search,   setSearch]   = useState('')
   const [showList, setShowList] = useState(false)
   const [form, setForm] = useState({
-    name: '', phone: '', productId: '', amount: '', notes: '',
+    name: '', phone: '', notes: '',
     hasDelivery: false, line1: '', line2: '', city: '', state: '', pincode: '',
   })
+  const [items, setItems] = useState([])   // { product_id, name, price }
+  const [showDiscount, setShowDiscount] = useState(false)
+  const [discountAmt,  setDiscountAmt]  = useState('')
   const [proofs, setProofs] = useState([])  // { id, name, previewUrl, key, status, error }
   const fileRef = useRef(null)
   const uploading = proofs.some((p) => p.status === 'uploading')
@@ -712,22 +728,30 @@ function GpayPaymentModal({ onClose, onSuccess }) {
     })
   }
 
-  function handleProductChange(id) {
-    const prod = products.find((p) => p._id === id)
-    setForm((f) => ({
-      ...f,
-      productId: id,
-      // Prefill amount from the product price if the field is still empty
-      amount: f.amount || (prod?.price != null ? String(prod.price) : ''),
-    }))
+  // Add a product (price prefilled from the catalogue, editable), or remove it if already picked.
+  function toggleProduct(prod) {
+    setItems((prev) => prev.some((i) => i.product_id === prod._id)
+      ? prev.filter((i) => i.product_id !== prod._id)
+      : [...prev, { product_id: prod._id, name: prod.name, price: prod.price != null ? String(prod.price) : '' }])
   }
+  function setItemPrice(id, value) {
+    setItems((prev) => prev.map((i) => (i.product_id === id ? { ...i, price: value } : i)))
+  }
+  function removeItem(id) {
+    setItems((prev) => prev.filter((i) => i.product_id !== id))
+  }
+
+  const subtotal = items.reduce((s, i) => s + (Math.round(Number(i.price)) || 0), 0)
+  const discAmt  = showDiscount ? Math.max(0, Math.round(Number(discountAmt) || 0)) : 0
+  const total    = subtotal - discAmt
 
   async function submit() {
     setError('')
     if (!form.name.trim())  return setError('Customer name is required')
     if (!form.phone.trim()) return setError('Phone number is required')
-    if (!form.productId)    return setError('Please select a product')
-    if (!form.amount || Number(form.amount) < 1) return setError('Enter a valid amount')
+    if (!items.length)      return setError('Please select at least one product')
+    if (items.some((i) => !(Number(i.price) >= 1))) return setError('Enter a valid price for every product')
+    if (discAmt >= subtotal) return setError('Discount must be less than the total')
     if (uploading) return setError('Please wait for images to finish uploading')
     const doneProofs = proofs.filter((p) => p.status === 'done' && p.key)
     if (!doneProofs.length) return setError('Upload at least one payment proof image')
@@ -742,8 +766,8 @@ function GpayPaymentModal({ onClose, onSuccess }) {
       await api.post('/payment/manual', {
         name:          form.name.trim(),
         phone:         form.phone.trim(),
-        productId:     form.productId,
-        amount:        Number(form.amount),
+        items:           items.map((i) => ({ product_id: i.product_id, price: Math.round(Number(i.price)) })),
+        discount_amount: discAmt > 0 ? discAmt : undefined,
         paymentProofs: doneProofs.map((p) => ({ key: p.key, name: p.name })),
         notes:         form.notes.trim() || undefined,
         hasDelivery:   form.hasDelivery,
@@ -763,7 +787,6 @@ function GpayPaymentModal({ onClose, onSuccess }) {
     }
   }
 
-  const selectedProduct = products.find((p) => p._id === form.productId)
   const filtered = search
     ? products.filter((p) => p.name?.toLowerCase().includes(search.toLowerCase()))
     : products
@@ -790,37 +813,98 @@ function GpayPaymentModal({ onClose, onSuccess }) {
           </div>
 
           <div className="relative">
-            <label className="block text-xs font-medium text-gray-600 mb-1">Product <span className="text-red-500">*</span> <span className="text-gray-400 font-normal">(existing only)</span></label>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Products <span className="text-red-500">*</span> <span className="text-gray-400 font-normal">(existing only — pick one or more)</span></label>
             <input
-              value={selectedProduct ? selectedProduct.name : search}
-              onChange={(e) => { setSearch(e.target.value); set('productId', ''); setShowList(true) }}
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setShowList(true) }}
               onFocus={() => setShowList(true)}
               onBlur={() => setTimeout(() => setShowList(false), 150)}
-              placeholder="Search and select a product…"
+              placeholder="Search and add products…"
               className={inputCls}
             />
             {showList && (
               <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg">
                 {filtered.length === 0 ? (
                   <p className="px-3 py-2 text-xs text-gray-400">No products found</p>
-                ) : filtered.map((p) => (
-                  <button
-                    type="button"
-                    key={p._id}
-                    onMouseDown={(e) => { e.preventDefault(); handleProductChange(p._id); setSearch(''); setShowList(false) }}
-                    className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 border-b border-gray-50 last:border-0"
-                  >
-                    {p.name}{p.price != null ? ` — ₹${p.price}` : ''}
-                  </button>
-                ))}
+                ) : filtered.map((p) => {
+                  const picked = items.some((i) => i.product_id === p._id)
+                  return (
+                    <button
+                      type="button"
+                      key={p._id}
+                      onMouseDown={(e) => { e.preventDefault(); toggleProduct(p) }}
+                      className={`w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-blue-50 border-b border-gray-50 last:border-0 ${picked ? 'bg-blue-50' : ''}`}
+                    >
+                      <input type="checkbox" readOnly checked={picked} className="w-4 h-4 rounded accent-blue-600 shrink-0 pointer-events-none" />
+                      <span className="flex-1">{p.name}</span>
+                      {p.price != null && <span className="text-gray-500 shrink-0">₹{p.price}</span>}
+                    </button>
+                  )
+                })}
               </div>
             )}
           </div>
 
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Amount (₹) <span className="text-red-500">*</span></label>
-            <input type="number" min="1" value={form.amount} onChange={(e) => set('amount', e.target.value)} placeholder="Amount paid via GPay" className={inputCls} />
-          </div>
+          {items.length > 0 && (
+            <div className="rounded-lg border border-gray-200 bg-gray-50 overflow-hidden">
+              {items.map((item) => (
+                <div key={item.product_id} className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 last:border-0">
+                  <span className="flex-1 text-sm text-gray-800">{item.name}</span>
+                  <span className="text-xs text-gray-500">₹</span>
+                  <input
+                    type="number"
+                    min="1"
+                    value={item.price}
+                    onChange={(e) => setItemPrice(item.product_id, e.target.value)}
+                    className="w-24 border border-gray-200 rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  />
+                  <button type="button" onClick={() => removeItem(item.product_id)} className="text-red-400 hover:text-red-600 text-sm px-1" title="Remove">×</button>
+                </div>
+              ))}
+
+              <div className="border-t border-gray-200 bg-gray-100">
+                {discAmt > 0 && (
+                  <div className="px-3 py-1.5 flex items-center justify-between text-xs text-gray-500">
+                    <span>Subtotal</span>
+                    <span>₹{subtotal.toLocaleString('en-IN')}</span>
+                  </div>
+                )}
+                {showDiscount && (
+                  <div className="px-3 py-2 flex items-center gap-2 border-t border-dashed border-gray-200">
+                    <span className="text-xs text-emerald-700 font-medium flex-1">Discount</span>
+                    <span className="text-xs text-gray-500">₹</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max={subtotal}
+                      value={discountAmt}
+                      onChange={(e) => setDiscountAmt(e.target.value)}
+                      placeholder="0"
+                      className="w-24 border border-emerald-300 rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-white"
+                      autoFocus
+                    />
+                  </div>
+                )}
+                <div className="px-3 py-2 flex items-center justify-between border-t border-gray-200">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-gray-700">Amount paid</span>
+                    <button
+                      type="button"
+                      onClick={() => { setShowDiscount((v) => !v); if (showDiscount) setDiscountAmt('') }}
+                      className={`text-xs px-2 py-0.5 rounded-full border font-medium transition-colors ${
+                        showDiscount
+                          ? 'bg-emerald-100 border-emerald-300 text-emerald-700 hover:bg-emerald-200'
+                          : 'border-gray-300 text-gray-400 hover:border-emerald-400 hover:text-emerald-600'
+                      }`}
+                    >
+                      {showDiscount ? (discAmt > 0 ? `−₹${discAmt.toLocaleString('en-IN')}` : 'Discount') : '₹ Discount'}
+                    </button>
+                  </div>
+                  <span className={`text-sm font-bold ${total < 1 ? 'text-red-600' : 'text-gray-900'}`}>₹{total.toLocaleString('en-IN')}</span>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">
@@ -1108,7 +1192,7 @@ export default function AllOrders() {
       const headers = [
         'Date', 'Order ID',
         'Customer Name', 'Customer Phone', 'Customer Email',
-        'Source', 'Items', 'Total Amount', 'Paid Amount', 'Pending Amount',
+        'Source', 'Items', 'Discount', 'Total Amount', 'Paid Amount', 'Pending Amount',
         'Payment Status', 'Fulfillment Status', 'Class Scheduled', 'Admin Notes',
       ]
       if (hasDelivery) {
@@ -1135,6 +1219,7 @@ export default function AllOrders() {
           o.userId?.email || '',
           o.source || '',
           items,
+          o.discount ? o.discount.amount : 0,
           total,
           o.emi ? o.emi.paid : total,
           o.emi ? o.emi.pending : 0,
@@ -1490,6 +1575,14 @@ export default function AllOrders() {
                     </td>
                     <td className="px-4 py-3 text-gray-700 font-medium text-xs">
                       {fmtAmount(o.items)}
+                      {o.discount && (
+                        <div
+                          className="mt-1 font-normal whitespace-nowrap text-emerald-700"
+                          title={`Discount ${rupees(o.discount.amount)} on ${rupees(o.discount.original)}`}
+                        >
+                          −{rupees(o.discount.amount)} discount
+                        </div>
+                      )}
                       {o.emi?.pending > 0 && (
                         <div
                           className="mt-1 font-normal whitespace-nowrap"
