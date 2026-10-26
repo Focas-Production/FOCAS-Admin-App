@@ -129,6 +129,8 @@ export default function Accounts() {
   const [showReminders, setShowReminders] = useState(false)
   const [reminderOn, setReminderOn]   = useState(null) // { due, overdue } WhatsApp reminder switches (null = not loaded)
   const [deletingId, setDeletingId]   = useState(null)
+  const [showHidden, setShowHidden]   = useState(false) // list hidden (won't pay) rows instead of active ones
+  const [hidingId, setHidingId]       = useState(null)
 
   const loadSummary = useCallback(async () => {
     setLoadingS(true)
@@ -207,6 +209,25 @@ export default function Accounts() {
     await loadReceivables()
   }
 
+  // Hide (won't pay) / unhide a row. Only the Receivables card + list change —
+  // Total Sales and Cash Collected stay as they are.
+  const setHidden = async (row, hidden) => {
+    const msg = hidden
+      ? `Hide ${row.name}'s receivable of ${fmt(row.outstanding)}?\n\nIt leaves this list and the Receivables card, and gets no WhatsApp reminders. Total Sales and Cash Collected don't change. You can unhide it any time.`
+      : `Unhide ${row.name}'s receivable of ${fmt(row.outstanding)}? It comes back to the list, the Receivables card and WhatsApp reminders.`
+    if (!window.confirm(msg)) return
+    const id = row.paymentId || row.manualId
+    setHidingId(id)
+    try {
+      await updateReceivable(row, { hidden })
+      loadSummary()
+    } catch {
+      // updateReceivable already told the admin
+    } finally {
+      setHidingId(null)
+    }
+  }
+
   useEffect(() => { loadSummary() }, [loadSummary])
   useEffect(() => { loadReceivables() }, [loadReceivables])
   useEffect(() => {
@@ -217,13 +238,15 @@ export default function Accounts() {
   useEffect(() => { loadEntries() }, [loadEntries])
 
   const totalPages   = Math.ceil(total / limit)
-  const overdueCount = receivables.filter((r) => r.status === 'overdue').length
+  const hiddenCount  = receivables.filter((r) => r.hidden).length
+  const listRows     = receivables.filter((r) => !!r.hidden === showHidden) // active or hidden view
+  const overdueCount = receivables.filter((r) => !r.hidden && r.status === 'overdue').length
 
-  const shown          = filterReceivables(receivables, filters)
+  const shown          = filterReceivables(listRows, filters)
   const shownOwed      = shown.reduce((sum, r) => sum + (r.outstanding || 0), 0)
   const hasFilter      = filters.q || filters.status || filters.month || filters.from || filters.to
   // Month choices = months that actually have rows for the chosen date, with counts
-  const monthCounts    = receivables.reduce((acc, r) => {
+  const monthCounts    = listRows.reduce((acc, r) => {
     const m = r[filters.dateField]?.slice(0, 7)
     if (m) acc[m] = (acc[m] || 0) + 1
     return acc
@@ -243,7 +266,10 @@ export default function Accounts() {
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <SummaryCard label="Total Sales (Booked)"  value={fmt(summary?.total_sales)}       color="text-emerald-600" sub="Full value at first payment" />
-          <SummaryCard label="Receivables (Pending)" value={fmt(summary?.total_receivables)} color="text-orange-500"  sub="Outstanding EMI balance" />
+          <SummaryCard label="Receivables (Pending)" value={fmt(summary?.total_receivables)} color="text-orange-500"
+            sub={summary?.hidden_count > 0
+              ? `Outstanding EMI balance · ${fmt(summary.hidden_receivables)} hidden (${summary.hidden_count})`
+              : 'Outstanding EMI balance'} />
           <SummaryCard label="Total Refunds"         value={fmt(summary?.total_refunds)}     color="text-red-500"     sub="Admin-initiated refunds" />
           <SummaryCard label="Cash Collected"        value={fmt(summary?.total_collected)}   color="text-blue-600"    sub="Received minus refunds" />
         </div>
@@ -311,8 +337,18 @@ export default function Accounts() {
                 Clear
               </button>
             )}
+            {(hiddenCount > 0 || showHidden) && (
+              <button onClick={() => { setShowHidden((v) => !v); setFilters(EMPTY_FILTERS) }}
+                title={showHidden ? 'Back to the active receivables' : 'Receivables hidden as won’t pay — not in the Receivables card'}
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${showHidden
+                  ? 'bg-gray-700 border-gray-700 text-white hover:bg-gray-800'
+                  : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
+                {showHidden ? '← Active receivables' : `Hidden (${hiddenCount})`}
+              </button>
+            )}
             <span className="ml-auto text-xs text-gray-500 whitespace-nowrap">
-              {hasFilter ? `${shown.length} of ${receivables.length}` : `${receivables.length} customers`}
+              {showHidden && <span className="font-semibold text-gray-700">Hidden · </span>}
+              {hasFilter ? `${shown.length} of ${listRows.length}` : `${listRows.length} customers`}
               {' · '}<span className="font-semibold text-orange-600">{fmt(shownOwed)}</span> outstanding
             </span>
             <button onClick={() => exportReceivablesCsv(shown, upiId, filters)} disabled={shown.length === 0}
@@ -323,7 +359,11 @@ export default function Accounts() {
           </div>
 
           {shown.length === 0 ? (
-            <p className="px-5 py-8 text-center text-sm text-gray-400">No receivables match these filters.</p>
+            <p className="px-5 py-8 text-center text-sm text-gray-400">
+              {listRows.length === 0
+                ? (showHidden ? 'No hidden receivables.' : 'Every outstanding receivable is hidden — see “Hidden”.')
+                : 'No receivables match these filters.'}
+            </p>
           ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -345,7 +385,7 @@ export default function Accounts() {
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {shown.map((r) => (
-                  <tr key={r.paymentId || r.manualId} className="hover:bg-gray-50">
+                  <tr key={r.paymentId || r.manualId} className={`hover:bg-gray-50 ${r.hidden ? 'opacity-70' : ''}`}>
                     <td className="px-3 py-3 whitespace-nowrap text-gray-600">
                       {/* Sale-backed rows use the real sale date; manual rows are typed in */}
                       {r.manual ? (
@@ -360,6 +400,10 @@ export default function Accounts() {
                       {r.refunded && (
                         <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-red-700 bg-red-100 px-1.5 py-0.5 rounded"
                           title="This order has a refund — no WhatsApp reminders are sent for it">Refunded</span>
+                      )}
+                      {r.hidden && (
+                        <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-gray-600 bg-gray-200 px-1.5 py-0.5 rounded"
+                          title="Hidden — not in the Receivables card, no WhatsApp reminders">Hidden</span>
                       )}
                     </td>
                     <td className="px-3 py-3 text-gray-500">{r.phone || '—'}</td>
@@ -387,6 +431,12 @@ export default function Accounts() {
                           : <span className="text-gray-400">+ Add note</span>} />
                     </td>
                     <td className="px-2 py-3 text-center whitespace-nowrap">
+                      {/* Any row can be hidden (won't pay) / unhidden */}
+                      <button onClick={() => setHidden(r, !r.hidden)} disabled={hidingId === (r.paymentId || r.manualId)}
+                        className="text-xs font-medium text-gray-500 hover:text-gray-800 border border-gray-200 hover:border-gray-400 rounded px-1.5 py-0.5 mr-1 disabled:opacity-40"
+                        title={r.hidden ? 'Bring back to the list and the Receivables card' : 'Hide (won’t pay) — Sales and Cash Collected are not changed'}>
+                        {hidingId === (r.paymentId || r.manualId) ? '…' : r.hidden ? 'Unhide' : 'Hide'}
+                      </button>
                       {/* Only manual receivables can be edited / deleted; sale-backed rows are read-only */}
                       {r.manual && (
                         <>
